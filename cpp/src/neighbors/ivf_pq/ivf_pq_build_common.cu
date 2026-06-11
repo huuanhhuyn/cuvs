@@ -239,8 +239,8 @@ void make_rotation_matrix(raft::resources const& handle,
                           float* rotation_matrix,
                           raft::random::RngState rng = raft::random::RngState(7ULL))
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::make_rotation_matrix(%u * %u)", n_rows, n_cols);
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_pq::make_rotation_matrix(%u * %u)", n_rows, n_cols);
   auto stream  = raft::resource::get_cuda_stream(handle);
   bool inplace = n_rows == n_cols;
   uint32_t n   = std::max(n_rows, n_cols);

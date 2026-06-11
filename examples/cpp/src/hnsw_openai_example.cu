@@ -9,6 +9,7 @@
 #include <raft/core/device_mdarray.hpp>
 #include <raft/core/resources.hpp>
 #include <raft/random/make_blobs.cuh>
+#include <raft/util/memory_tracking_resources.hpp>
 #include <string>
 
 #include <cuvs/neighbors/cagra.hpp>
@@ -66,6 +67,12 @@ int cagra_build_search_ace(raft::resources const& res)
   params.ef_construction = 200;
   params.hierarchy       = cuvs::neighbors::hnsw::HnswHierarchy::GPU;
 
+  // auto ace_params = hnsw::graph_build_params::ace_params();
+  // ace_params.npartitions = 4;
+  // ace_params.build_dir = "/tmp/hnsw_ace_build";
+  // ace_params.use_disk  = false;
+  // params.graph_build_params = ace_params;
+
   auto hnsw_index = hnsw::build(res, params, dataset_host_view);
 
   std::string hnsw_index_path = "hnsw_index.bin";
@@ -92,6 +99,11 @@ int main()
   // a pool with 2 GiB upper limit.
   raft::resource::set_workspace_to_pool_resource(res, 2 * 1024 * 1024 * 1024ull);
 
+  const char* csv_path = "openai_5M.csv";
+  raft::memory_tracking_resources tracked(res, csv_path, std::chrono::milliseconds(1));
+
   // ACE build and search example.
-  cagra_build_search_ace(res);
+  cagra_build_search_ace(tracked);
+
+  std::cout << "Tracking stats: " << csv_path << std::endl;
 }

@@ -67,7 +67,7 @@ void initRandom(raft::resources const& handle,
                 raft::device_matrix_view<const DataT, IndexT> X,
                 raft::device_matrix_view<DataT, IndexT> centroids)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("initRandom");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("initRandom");
   auto n_clusters = params.n_clusters;
   cuvs::cluster::kmeans::detail::shuffleAndGather<DataT, IndexT>(
     handle, X, centroids, n_clusters, params.rng_state.seed);
@@ -94,7 +94,7 @@ void kmeansPlusPlus(raft::resources const& handle,
                     raft::device_matrix_view<DataT, IndexT> centroidsRawData,
                     rmm::device_uvector<char>& workspace)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeansPlusPlus");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeansPlusPlus");
   cudaStream_t stream = raft::resource::get_cuda_stream(handle);
   auto n_samples      = X.extent(0);
   auto n_features     = X.extent(1);
@@ -307,8 +307,8 @@ void initScalableKMeansPlusPlus(raft::resources const& handle,
                                 raft::device_matrix_view<DataT, IndexT> centroidsRawData,
                                 rmm::device_uvector<char>& workspace)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "initScalableKMeansPlusPlus");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "initScalableKMeansPlusPlus");
   cudaStream_t stream = raft::resource::get_cuda_stream(handle);
   auto n_samples      = X.extent(0);
   auto n_features     = X.extent(1);
@@ -568,7 +568,7 @@ void kmeans_fit(
   RAFT_EXPECTS(pams.metric == cuvs::distance::DistanceType::L2Expanded ||
                  pams.metric == cuvs::distance::DistanceType::L2SqrtExpanded,
                "kmeans only supports L2Expanded or L2SqrtExpanded distance metrics.");
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeans_fit");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeans_fit");
   auto n_samples      = X.extent(0);
   auto n_features     = X.extent(1);
   auto n_clusters     = pams.n_clusters;
@@ -1030,7 +1030,7 @@ void kmeans_predict(raft::resources const& handle,
   RAFT_EXPECTS(pams.metric == cuvs::distance::DistanceType::L2Expanded ||
                  pams.metric == cuvs::distance::DistanceType::L2SqrtExpanded,
                "kmeans only supports L2Expanded or L2SqrtExpanded distance metrics.");
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeans_predict");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeans_predict");
   auto n_samples      = X.extent(0);
   auto n_features     = X.extent(1);
   cudaStream_t stream = raft::resource::get_cuda_stream(handle);
@@ -1182,7 +1182,7 @@ void kmeans_transform(raft::resources const& handle,
   RAFT_EXPECTS(pams.metric == cuvs::distance::DistanceType::L2Expanded ||
                  pams.metric == cuvs::distance::DistanceType::L2SqrtExpanded,
                "kmeans only supports L2Expanded or L2SqrtExpanded distance metrics.");
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeans_transform");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("kmeans_transform");
   raft::default_logger().set_level(pams.verbosity);
   cudaStream_t stream = raft::resource::get_cuda_stream(handle);
   auto n_samples      = X.extent(0);

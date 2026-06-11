@@ -54,6 +54,7 @@ constexpr double to_gib(size_t bytes) { return static_cast<double>(bytes) / (1 <
 template <typename T, typename IdxT>
 void check_graph_degree(size_t& intermediate_degree, size_t& graph_degree, size_t dataset_size)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::check_graph_degree");
   if (intermediate_degree >= static_cast<size_t>(dataset_size)) {
     RAFT_LOG_WARN(
       "Intermediate graph degree cannot be larger than dataset size, reducing it to %lu",
@@ -81,6 +82,7 @@ void ace_get_partition_labels(
   size_t min_partition_size,
   double sampling_rate = 0.01)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_get_partition_labels");
   size_t dataset_size = dataset.extent(0);
   size_t dataset_dim  = dataset.extent(1);
   size_t labels_size  = partition_labels.extent(0);
@@ -203,6 +205,7 @@ void ace_check_partition_sizes(
   raft::host_matrix_view<IdxT, int64_t, raft::row_major> partition_histogram,
   size_t min_partition_size)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_check_partition_sizes");
   // Collect partition histogram statistics
   size_t total_core_vectors      = 0;
   size_t total_augmented_vectors = 0;
@@ -292,6 +295,7 @@ void ace_create_forward_and_backward_lists(
   raft::host_vector_view<IdxT, int64_t, raft::row_major> core_partition_offsets,
   raft::host_vector_view<IdxT, int64_t, raft::row_major> augmented_partition_offsets)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_create_forward_and_backward_lists");
   core_partition_offsets(0)      = 0;
   augmented_partition_offsets(0) = 0;
   for (size_t c = 1; c < n_partitions; c++) {
@@ -369,6 +373,7 @@ void ace_gather_partition_dataset(
   raft::host_vector_view<IdxT, int64_t, raft::row_major> augmented_partition_offsets,
   raft::host_matrix_view<T, int64_t, raft::row_major> sub_dataset)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_gather_partition_dataset");
   const size_t vector_size_bytes = dataset_dim * sizeof(T);
 
   // Copy core partition vectors
@@ -400,6 +405,7 @@ void ace_adjust_sub_graph_ids(
   raft::host_vector_view<IdxT, int64_t, raft::row_major> core_backward_mapping,
   raft::host_vector_view<IdxT, int64_t, raft::row_major> augmented_backward_mapping)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_adjust_sub_graph_ids");
 #pragma omp parallel for
   for (size_t i = 0; i < core_sub_dataset_size; i++) {
     // Map row index from local → reordered → original
@@ -438,6 +444,7 @@ void ace_adjust_sub_graph_ids_disk(
   raft::host_vector_view<IdxT, int64_t, raft::row_major> augmented_backward_mapping,
   raft::host_vector_view<IdxT, int64_t, raft::row_major> core_forward_mapping)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_adjust_sub_graph_ids_disk");
 #pragma omp parallel for
   for (size_t i = 0; i < core_sub_dataset_size; i++) {
     for (size_t k = 0; k < graph_degree; k++) {
@@ -476,6 +483,7 @@ void ace_reorder_and_store_dataset(
   size_t augmented_header_size,
   size_t mapping_header_size)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_reorder_and_store_dataset");
   auto start = std::chrono::high_resolution_clock::now();
 
   size_t dataset_size = dataset.extent(0);
@@ -683,6 +691,7 @@ void ace_load_partition_dataset_from_disk(
   raft::host_vector_view<IdxT, int64_t, raft::row_major> augmented_partition_offsets,
   raft::host_matrix_view<T, int64_t, raft::row_major> sub_dataset)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_load_partition_dataset_from_disk");
   size_t n_partitions = partition_histogram.extent(0);
 
   RAFT_LOG_DEBUG("ACE: Loading partition %lu dataset from disk", partition_id);
@@ -829,6 +838,7 @@ bool ace_check_use_disk_mode(bool use_disk,
                              bool guarantee_connectivity,
                              ace_memory_requirements& mem)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_check_use_disk_mode");
   // Use overridden memory limits if provided (> 0), otherwise query actual system memory
   if (max_host_memory_gb.has_value() && max_host_memory_gb.value() > 0) {
     mem.available_host_memory = static_cast<size_t>(max_host_memory_gb.value() * (1ULL << 30));
@@ -938,6 +948,7 @@ void ace_validate_disk_mode_partitions(size_t& n_partitions,
                                        bool guarantee_connectivity,
                                        ace_memory_requirements& mem)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ace_validate_disk_mode_partitions");
   // In disk mode, we don't need the full dataset or final graph in memory.
   // Host memory model for disk mode:
   //   - Partition labels (core + augmented): 2 * dataset_size * sizeof(IdxT)
@@ -1095,17 +1106,12 @@ index<T, IdxT> build_ace(raft::resources const& res,
     std::holds_alternative<cagra::graph_build_params::ace_params>(params.graph_build_params),
     "ACE build requires graph_build_params to be set to ace_params");
 
+  cuvs::common::nvtx::push_range("aaa no_alloc build_ace locals");
   auto ace_params    = std::get<cagra::graph_build_params::ace_params>(params.graph_build_params);
   size_t npartitions = ace_params.npartitions;
   size_t ef_construction = ace_params.ef_construction;
   std::string build_dir  = ace_params.build_dir;
   bool use_disk          = ace_params.use_disk;
-
-  common::nvtx::range<common::nvtx::domain::cuvs> function_scope(
-    "cagra::build_ace<host>(%zu, %zu, %zu)",
-    params.intermediate_graph_degree,
-    params.graph_degree,
-    npartitions);
 
   size_t dataset_size = dataset.extent(0);
   size_t dataset_dim  = dataset.extent(1);
@@ -1149,6 +1155,8 @@ index<T, IdxT> build_ace(raft::resources const& res,
   // Track whether to clean up build directory on failure
   bool cleanup_on_failure = false;
 
+  cuvs::common::nvtx::pop_range();
+
   try {
     check_graph_degree<T, IdxT>(intermediate_degree, graph_degree, dataset_size);
 
@@ -1177,6 +1185,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
                                                  mem);
     }
 
+    cuvs::common::nvtx::push_range("aaa no_alloc preallocate disk space");
     // Preallocate space for files for better performance and fail early if not enough space.
     cuvs::util::file_descriptor reordered_fd;
     cuvs::util::file_descriptor augmented_fd;
@@ -1214,7 +1223,9 @@ index<T, IdxT> build_ace(raft::resources const& res,
         mapping_header_size,
         graph_header_size);
     }
+    cuvs::common::nvtx::pop_range();
 
+    cuvs::common::nvtx::push_range("aaa build_ace::partition_labels");
     auto partition_start     = std::chrono::high_resolution_clock::now();
     auto partition_labels    = raft::make_host_matrix<IdxT, int64_t>(dataset_size, 2);
     auto partition_histogram = raft::make_host_matrix<IdxT, int64_t>(n_partitions, 2);
@@ -1222,6 +1233,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
       partition_histogram(c, 0) = 0;
       partition_histogram(c, 1) = 0;
     }
+    cuvs::common::nvtx::pop_range();
 
     // Determine minimum partition size for stable KNN graph construction
     size_t min_partition_size = std::max<size_t>(1000ULL, dataset_size / n_partitions * 0.1);
@@ -1235,6 +1247,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
                                     partition_histogram.view(),
                                     min_partition_size);
 
+    cuvs::common::nvtx::push_range("aaa no_alloc partition_end");
     auto partition_end = std::chrono::high_resolution_clock::now();
     auto partition_elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(partition_end - partition_start)
@@ -1247,12 +1260,16 @@ index<T, IdxT> build_ace(raft::resources const& res,
 
     // Create vector lists for each partition
     auto vectorlist_start      = std::chrono::high_resolution_clock::now();
+    cuvs::common::nvtx::pop_range();
+
+    cuvs::common::nvtx::push_range("aaa build_ace create_vector_lists");
     auto core_forward_mapping  = use_disk_mode ? raft::make_host_vector<IdxT, int64_t>(dataset_size)
                                                : raft::make_host_vector<IdxT, int64_t>(0);
     auto core_backward_mapping = raft::make_host_vector<IdxT, int64_t>(dataset_size);
     auto augmented_backward_mapping  = raft::make_host_vector<IdxT, int64_t>(dataset_size);
     auto core_partition_offsets      = raft::make_host_vector<IdxT, int64_t>(n_partitions + 1);
     auto augmented_partition_offsets = raft::make_host_vector<IdxT, int64_t>(n_partitions + 1);
+    cuvs::common::nvtx::pop_range();
 
     ace_create_forward_and_backward_lists<IdxT>(dataset_size,
                                                 n_partitions,
@@ -1264,11 +1281,13 @@ index<T, IdxT> build_ace(raft::resources const& res,
                                                 core_partition_offsets.view(),
                                                 augmented_partition_offsets.view());
 
+    cuvs::common::nvtx::push_range("aaa no_alloc vectorlist_end");
     auto vectorlist_end = std::chrono::high_resolution_clock::now();
     auto vectorlist_elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(vectorlist_end - vectorlist_start)
         .count();
     RAFT_LOG_INFO("ACE: Vector list creation completed in %ld ms", vectorlist_elapsed);
+    cuvs::common::nvtx::pop_range();
 
     // Reorder the dataset based on partitions and store to disk. Uses write buffers to improve
     // performance.
@@ -1291,14 +1310,17 @@ index<T, IdxT> build_ace(raft::resources const& res,
       core_backward_mapping = raft::make_host_vector<IdxT, int64_t>(0);
     }
 
+    cuvs::common::nvtx::push_range("aaa build_ace::search_graph");
     // Placeholder search graph for in-memory version
     auto search_graph = use_disk_mode
                           ? raft::make_host_matrix<IdxT, int64_t>(0, 0)
                           : raft::make_host_matrix<IdxT, int64_t>(dataset_size, graph_degree);
+    cuvs::common::nvtx::pop_range();
 
     // Process each partition
     auto partition_processing_start = std::chrono::high_resolution_clock::now();
     for (size_t partition_id = 0; partition_id < n_partitions; partition_id++) {
+      cuvs::common::nvtx::push_range("aaa no_alloc get sizes from partition histogram");
       RAFT_LOG_DEBUG("ACE: Processing partition %lu/%lu", partition_id + 1, n_partitions);
       auto start = std::chrono::high_resolution_clock::now();
 
@@ -1306,6 +1328,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
       size_t core_sub_dataset_size      = partition_histogram(partition_id, 0);
       size_t augmented_sub_dataset_size = partition_histogram(partition_id, 1);
       size_t sub_dataset_size           = core_sub_dataset_size + augmented_sub_dataset_size;
+      cuvs::common::nvtx::pop_range();
 
       if (sub_dataset_size == 0) {
         RAFT_LOG_WARN("ACE: Skipping empty partition %lu", partition_id);
@@ -1316,7 +1339,9 @@ index<T, IdxT> build_ace(raft::resources const& res,
                      core_sub_dataset_size,
                      augmented_sub_dataset_size);
 
+      cuvs::common::nvtx::push_range("aaa build_ace::sub_dataset");
       auto sub_dataset = raft::make_host_matrix<T, int64_t>(sub_dataset_size, dataset_dim);
+      cuvs::common::nvtx::pop_range();
 
       if (use_disk_mode) {
         // Load partition dataset from disk files
@@ -1346,6 +1371,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
         std::chrono::duration_cast<std::chrono::milliseconds>(read_end - start).count();
 
       // Create index for this partition
+      cuvs::common::nvtx::push_range("aaa build_ace::sub_index_params");
       cuvs::neighbors::cagra::index_params sub_index_params;
       sub_index_params = cuvs::neighbors::cagra::index_params::from_hnsw_params(
         raft::make_extents<int64_t>(sub_dataset_size, dataset_dim),
@@ -1355,23 +1381,30 @@ index<T, IdxT> build_ace(raft::resources const& res,
         params.metric);
       sub_index_params.attach_dataset_on_build = false;
       sub_index_params.guarantee_connectivity  = params.guarantee_connectivity;
+      cuvs::common::nvtx::pop_range();
 
+      cuvs::common::nvtx::push_range("aaa build_ace::build");
       auto sub_index = cuvs::neighbors::cagra::build(
         res, sub_index_params, raft::make_const_mdspan(sub_dataset.view()));
+      cuvs::common::nvtx::pop_range();
 
       auto optimize_end = std::chrono::high_resolution_clock::now();
       auto optimize_elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(optimize_end - read_end).count();
 
       // Copy graph edges for core members of this partition
+      cuvs::common::nvtx::push_range("aaa build_ace::init_sub_search_graph");
       auto sub_search_graph =
         raft::make_host_matrix<IdxT, int64_t>(core_sub_dataset_size, graph_degree);
       cudaStream_t stream = raft::resource::get_cuda_stream(res);
+      cuvs::common::nvtx::pop_range();
+      cuvs::common::nvtx::push_range("aaa build_ace::copy_sub_search_graph");
       raft::copy(
         res,
         raft::make_host_vector_view(sub_search_graph.data_handle(), sub_search_graph.size()),
         raft::make_device_vector_view(sub_index.graph().data_handle(), sub_search_graph.size()));
       raft::resource::sync_stream(res, stream);
+      cuvs::common::nvtx::pop_range();
 
       if (use_disk_mode) {
         // Adjust IDs in sub_search_graph in place for disk storage
@@ -1398,6 +1431,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
                                        augmented_backward_mapping.view());
       }
 
+      cuvs::common::nvtx::push_range("aaa no_alloc write_graph_to_disk");
       auto adjust_end = std::chrono::high_resolution_clock::now();
       auto adjust_elapsed =
         std::chrono::duration_cast<std::chrono::milliseconds>(adjust_end - optimize_end).count();
@@ -1436,8 +1470,10 @@ index<T, IdxT> build_ace(raft::resources const& res,
         adjust_elapsed,
         write_elapsed,
         write_throughput);
+      cuvs::common::nvtx::pop_range();
     }
 
+    common::nvtx::range<common::nvtx::domain::cuvs> r("aaa no_alloc partition_processing_end");
     auto partition_processing_end     = std::chrono::high_resolution_clock::now();
     auto partition_processing_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                                           partition_processing_end - partition_processing_start)
@@ -1460,7 +1496,9 @@ index<T, IdxT> build_ace(raft::resources const& res,
     index<T, IdxT> idx(res, params.metric);
     // Only add graph and dataset if not using disk storage. The returned index is empty if using
     // disk storage. Use the files written to disk for search.
+
     if (!use_disk_mode) {
+      common::nvtx::range<common::nvtx::domain::cuvs> r("aaa no_alloc update_graph");
       idx.update_graph(res, raft::make_const_mdspan(search_graph.view()));
 
       if (params.attach_dataset_on_build) {
@@ -1477,6 +1515,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
         }
       }
     } else {
+      common::nvtx::range<common::nvtx::domain::cuvs> r("aaa no_alloc update_dataset_and_graph");
       idx.update_dataset(res, std::move(reordered_fd));
       idx.update_graph(res, std::move(graph_fd));
       idx.update_mapping(res, std::move(mapping_fd));
@@ -1602,11 +1641,6 @@ void build_knn_graph(
                "Currently only L2Expanded, InnerProduct and CosineExpanded metrics are supported");
 
   uint32_t node_degree = knn_graph.extent(1);
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "cagra::build_knn_graph<IVF-PQ>(%zu, %zu, %u)",
-    size_t(dataset.extent(0)),
-    size_t(dataset.extent(1)),
-    node_degree);
 
   // Make model name
   const std::string model_name = [&]() {
@@ -1626,12 +1660,15 @@ void build_knn_graph(
   }();
 
   RAFT_LOG_DEBUG("# Building IVF-PQ index %s", model_name.c_str());
+  cuvs::common::nvtx::push_range("aaa build_knn::ivf_pq_build");
   auto index = cuvs::neighbors::ivf_pq::build(res, pq.build_params, dataset);
+  cuvs::common::nvtx::pop_range();
 
   //
   // search top (k + 1) neighbors
   //
 
+  cuvs::common::nvtx::push_range("aaa no_alloc heuristic");
   const auto top_k       = node_degree + 1;
   uint32_t gpu_top_k     = node_degree * pq.refinement_rate;
   gpu_top_k              = std::min<IdxT>(std::max(gpu_top_k, top_k), dataset.extent(0));
@@ -1691,7 +1728,9 @@ void build_knn_graph(
     gpu_top_k,
     max_queries,
     pq.search_params.n_probes);
+  cuvs::common::nvtx::pop_range();
 
+  cuvs::common::nvtx::push_range("aaa cagra_build::ivf_pq::buffers");
   auto distances = raft::make_device_mdarray<float>(
     res, workspace_mr, raft::make_extents<int64_t>(max_queries, gpu_top_k));
   auto neighbors = raft::make_device_mdarray<int64_t>(
@@ -1704,6 +1743,7 @@ void build_knn_graph(
   auto queries_host   = raft::make_host_matrix<DataT, int64_t>(max_queries, dataset.extent(1));
   auto refined_neighbors_host = raft::make_host_matrix<int64_t, int64_t>(max_queries, top_k);
   auto refined_distances_host = raft::make_host_matrix<float, int64_t>(max_queries, top_k);
+  cuvs::common::nvtx::pop_range();
 
   // TODO(tfeher): batched search with multiple GPUs
   std::size_t num_self_included = 0;
@@ -1711,6 +1751,7 @@ void build_knn_graph(
   const auto start_clock        = std::chrono::system_clock::now();
   auto last_tick                = start_clock;
 
+  cuvs::common::nvtx::push_range("aaa cagra_build::ivf_pq::vec_batches");
   auto vec_batches = cuvs::spatial::knn::detail::utils::make_batch_load_iterator<DataT>(
     res,
     dataset.data_handle(),
@@ -1719,7 +1760,8 @@ void build_knn_graph(
     static_cast<size_t>(max_queries),
     raft::resource::get_cuda_stream(res),
     workspace_mr);
-
+  cuvs::common::nvtx::pop_range();
+  
   size_t next_report_offset = 0;
   size_t d_report_offset    = dataset.extent(0) / 100;  // Report progress in 1% steps.
 
@@ -1728,6 +1770,7 @@ void build_knn_graph(
   size_t previous_batch_offset = 0;
 
   for (const auto& batch : vec_batches) {
+    common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ivf_pq::batch");
     auto queries_view = raft::make_device_matrix_view<const DataT, int64_t>(
       batch.data(), batch.size(), batch.row_width());
     auto neighbors_view = raft::make_device_matrix_view<int64_t, int64_t>(
@@ -1863,15 +1906,12 @@ void build_knn_graph(
   raft::host_matrix_view<IdxT, int64_t, raft::row_major> knn_graph,
   cuvs::neighbors::nn_descent::index_params build_params)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "cagra::build_knn_graph<NN-DESCENT>(%zu, %zu, %u)",
-    size_t(dataset.extent(0)),
-    size_t(dataset.extent(1)),
-    size_t(knn_graph.extent(1)));
-
+  cuvs::common::nvtx::push_range("aaa build_knn::nn_descent_build");
   std::optional<raft::host_matrix_view<IdxT, int64_t, row_major>> graph_view = knn_graph;
   auto nn_descent_idx = cuvs::neighbors::nn_descent::build(res, build_params, dataset, graph_view);
+  cuvs::common::nvtx::pop_range();
 
+  cuvs::common::nvtx::push_range("aaa no_alloc nn_descent_idx");
   using internal_IdxT = typename std::make_unsigned<IdxT>::type;
   using g_accessor    = typename decltype(nn_descent_idx.graph())::accessor_type;
   using g_accessor_internal =
@@ -1882,9 +1922,13 @@ void build_knn_graph(
       reinterpret_cast<internal_IdxT*>(nn_descent_idx.graph().data_handle()),
       nn_descent_idx.graph().extent(0),
       nn_descent_idx.graph().extent(1));
+  cuvs::common::nvtx::pop_range();
 
+  
+  cuvs::common::nvtx::push_range("aaa build_knn::sort_knn_graph");
   cuvs::neighbors::cagra::detail::graph::sort_knn_graph(
     res, build_params.metric, dataset, knn_graph_internal);
+  cuvs::common::nvtx::pop_range();
 }
 
 template <typename IdxT = uint32_t,
@@ -2158,13 +2202,8 @@ index<T, IdxT> build(
 {
   size_t intermediate_degree = params.intermediate_graph_degree;
   size_t graph_degree        = params.graph_degree;
-  common::nvtx::range<common::nvtx::domain::cuvs> function_scope(
-    "cagra::build<%s>(%zu, %zu)",
-    Accessor::is_managed_type::value ? "managed"
-    : Accessor::is_host_type::value  ? "host"
-                                     : "device",
-    intermediate_degree,
-    graph_degree);
+    // intermediate_degree,
+    // graph_degree);
   check_graph_degree<T, IdxT>(intermediate_degree, graph_degree, dataset.extent(0));
 
   // Set default value in case knn_build_params is not defined.
@@ -2173,14 +2212,17 @@ index<T, IdxT> build(
     // Heuristic to decide default build algo and its params.
     if (cuvs::neighbors::nn_descent::has_enough_device_memory(
           res, dataset.extents(), sizeof(IdxT))) {
+      common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::nn_descent_params");
       RAFT_LOG_DEBUG("NN descent solver");
       knn_build_params =
         cagra::graph_build_params::nn_descent_params(intermediate_degree, params.metric);
     } else {
+      common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::ivf_pq_params");
       RAFT_LOG_DEBUG("Selecting IVF-PQ solver");
       knn_build_params = cagra::graph_build_params::ivf_pq_params(dataset.extents(), params.metric);
     }
   }
+  cuvs::common::nvtx::push_range("aaa no_alloc");
   RAFT_EXPECTS(
     params.metric != cuvs::distance::DistanceType::BitwiseHamming ||
       std::holds_alternative<cagra::graph_build_params::iterative_search_params>(
@@ -2199,16 +2241,22 @@ index<T, IdxT> build(
                  (std::is_same_v<T, uint8_t> || std::is_same_v<T, int8_t>),
                "BitwiseHamming distance is only supported for int8_t and uint8_t data types. "
                "Current data type is not supported.");
+  cuvs::common::nvtx::pop_range();
 
+  cuvs::common::nvtx::push_range("aaa no_alloc cagra_graph");
   auto cagra_graph = raft::make_host_matrix<IdxT, int64_t>(0, 0);
+  cuvs::common::nvtx::pop_range();
 
   // Dispatch based on graph_build_params
   if (std::holds_alternative<cagra::graph_build_params::iterative_search_params>(
         knn_build_params)) {
+    common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::iterative_build_graph");
     cagra_graph = iterative_build_graph<T, IdxT, Accessor>(res, params, dataset);
   } else {
+    cuvs::common::nvtx::push_range("aaa cagra_build::knn_graph");
     std::optional<raft::host_matrix<IdxT, int64_t>> knn_graph(
       raft::make_host_matrix<IdxT, int64_t>(dataset.extent(0), intermediate_degree));
+    cuvs::common::nvtx::pop_range();
 
     if (std::holds_alternative<cagra::graph_build_params::ivf_pq_params>(knn_build_params)) {
       auto ivf_pq_params =
@@ -2221,8 +2269,11 @@ index<T, IdxT> build(
           params.metric);
         ivf_pq_params.build_params.metric = params.metric;
       }
+      cuvs::common::nvtx::push_range("aaa cagra_build::build_knn_graph by ivf_pq");
       build_knn_graph(res, dataset, knn_graph->view(), ivf_pq_params);
+      cuvs::common::nvtx::pop_range();
     } else {
+      cuvs::common::nvtx::push_range("aaa no_alloc nn_descent_params");
       auto nn_descent_params =
         std::get<cagra::graph_build_params::nn_descent_params>(knn_build_params);
 
@@ -2247,13 +2298,21 @@ index<T, IdxT> build(
 
       // Use nn-descent to build CAGRA knn graph
       nn_descent_params.return_distances = false;
+      cuvs::common::nvtx::pop_range();
+
+      cuvs::common::nvtx::push_range("aaa cagra_build::build_knn_graph by nn_descent");
       build_knn_graph<T, IdxT>(res, dataset, knn_graph->view(), nn_descent_params);
+      cuvs::common::nvtx::pop_range();
     }
 
+    cuvs::common::nvtx::push_range("aaa cagra_build::cagra_graph");
     cagra_graph = raft::make_host_matrix<IdxT, int64_t>(dataset.extent(0), graph_degree);
-
+    cuvs::common::nvtx::pop_range();
+    
     RAFT_LOG_TRACE("optimizing graph");
+    cuvs::common::nvtx::push_range("aaa cagra_build::optimize");
     optimize<IdxT>(res, knn_graph->view(), cagra_graph.view(), params.guarantee_connectivity);
+    cuvs::common::nvtx::pop_range();
 
     // free intermediate graph before trying to create the index
     knn_graph.reset();
@@ -2265,16 +2324,17 @@ index<T, IdxT> build(
   if (params.compression.has_value()) {
     RAFT_EXPECTS(params.metric == cuvs::distance::DistanceType::L2Expanded,
                  "VPQ compression is only supported with L2Expanded distance mertric");
+    common::nvtx::range<common::nvtx::domain::cuvs> r("aaa cagra_build::vpq_build");
     index<T, IdxT> idx(res, params.metric);
     idx.update_graph(res, raft::make_const_mdspan(cagra_graph.view()));
     idx.update_dataset(
       res,
       // TODO: hardcoding codebook math to `half`, we can do runtime dispatching later
       cuvs::preprocessing::quantize::pq::vpq_build(res, *params.compression, dataset));
-
     return idx;
   }
   if (params.attach_dataset_on_build) {
+    common::nvtx::range<common::nvtx::domain::cuvs> r("aaa !!! cagra_build::attach_dataset_on_build");
     try {
       return index<T, IdxT>(
         res, params.metric, dataset, raft::make_const_mdspan(cagra_graph.view()));
@@ -2291,8 +2351,11 @@ index<T, IdxT> build(
         "be added to the index");
     }
   }
+
+  cuvs::common::nvtx::push_range("aaa cagra_build::update_graph");
   index<T, IdxT> idx(res, params.metric);
   idx.update_graph(res, raft::make_const_mdspan(cagra_graph.view()));
+  cuvs::common::nvtx::pop_range();
   return idx;
 }
 }  // namespace cuvs::neighbors::cagra::detail

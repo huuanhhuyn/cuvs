@@ -47,8 +47,8 @@ void refine_device(
                "k must be less than topk::kMaxCapacity (%d).",
                raft::matrix::detail::select::warpsort::kMaxCapacity);
 
-  cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "neighbors::refine(%zu, %u)", size_t(n_queries), uint32_t(n_candidates));
+  // cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "neighbors::refine(%zu, %u)", size_t(n_queries), uint32_t(n_candidates));
 
   refine_check_input(dataset.extents(),
                      queries.extents(),

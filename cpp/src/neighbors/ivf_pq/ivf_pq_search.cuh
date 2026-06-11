@@ -71,12 +71,12 @@ void select_clusters(raft::resources const& handle,
                      const float* cluster_centers,  // [n_lists, dim_ext]
                      rmm::device_async_resource_ref mr)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
-    n_probes,
-    n_queries,
-    n_lists,
-    dim);
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
+    // n_probes,
+    // n_queries,
+    // n_lists,
+    // dim);
   auto stream = raft::resource::get_cuda_stream(handle);
   /* NOTE[qc_distances]
 
@@ -181,12 +181,12 @@ void select_clusters(raft::resources const& handle,
                      const int8_t* cluster_centers,  // [n_lists, dim_ext]
                      rmm::device_async_resource_ref mr)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
-    n_probes,
-    n_queries,
-    n_lists,
-    dim);
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
+    // n_probes,
+    // n_queries,
+    // n_lists,
+    // dim);
   auto stream = raft::resource::get_cuda_stream(handle);
   int8_t norm_factor;
   switch (metric) {
@@ -269,12 +269,12 @@ void select_clusters(raft::resources const& handle,
                      const half* cluster_centers,  // [n_lists, dim_ext]
                      rmm::device_async_resource_ref mr)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
-    n_probes,
-    n_queries,
-    n_lists,
-    dim);
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
+    // n_probes,
+    // n_queries,
+    // n_lists,
+    // dim);
   auto stream = raft::resource::get_cuda_stream(handle);
   half norm_factor;
   switch (metric) {
@@ -433,12 +433,12 @@ void ivfpq_search_worker(raft::resources const& handle,
                          double preferred_shmem_carveout,
                          IvfSampleFilterT sample_filter)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::search-worker(n_queries = %u, n_probes = %u, k = %u, dim = %zu)",
-    n_queries,
-    n_probes,
-    topK,
-    index.dim());
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_pq::search-worker(n_queries = %u, n_probes = %u, k = %u, dim = %zu)",
+    // n_queries,
+    // n_probes,
+    // topK,
+    // index.dim());
   auto stream = raft::resource::get_cuda_stream(handle);
   auto mr     = raft::resource::get_workspace_resource_ref(handle);
 
@@ -891,12 +891,12 @@ inline void search(raft::resources const& handle,
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, half> || std::is_same_v<T, uint8_t> ||
                   std::is_same_v<T, int8_t>,
                 "Unsupported element type.");
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::search(n_queries = %u, n_probes = %u, k = %u, dim = %zu)",
-    n_queries,
-    params.n_probes,
-    k,
-    index.dim());
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_pq::search(n_queries = %u, n_probes = %u, k = %u, dim = %zu)",
+    // n_queries,
+    // params.n_probes,
+    // k,
+    // index.dim());
 
   RAFT_EXPECTS(
     params.internal_distance_dtype == CUDA_R_16F || params.internal_distance_dtype == CUDA_R_32F,
@@ -971,8 +971,8 @@ inline void search(raft::resources const& handle,
 
   for (uint32_t offset_q = 0; offset_q < n_queries; offset_q += max_bs_outer) {
     uint32_t queries_batch = min(max_bs_outer, n_queries - offset_q);
-    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> batch_scope(
-      "ivf_pq::search-batch(queries: %u - %u)", offset_q, offset_q + queries_batch);
+    // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> batch_scope(
+      // "ivf_pq::search-batch(queries: %u - %u)", offset_q, offset_q + queries_batch);
 
     std::visit(
       [&](auto&& gemm_qs) {

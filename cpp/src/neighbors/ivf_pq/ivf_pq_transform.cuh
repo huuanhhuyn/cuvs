@@ -112,8 +112,8 @@ void transform(raft::resources const& res,
     output_dataset.extent(1) == raft::ceildiv<uint32_t>(index.pq_dim() * index.pq_bits(), 8),
     "incorrect number of cols in output_dataset");
 
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::transform(n_rows = %u, dim = %u)", n_rows, dataset.extent(1));
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_pq::transform(n_rows = %u, dim = %u)", n_rows, dataset.extent(1));
 
   rmm::device_async_resource_ref mr = raft::resource::get_workspace_resource_ref(res);
 

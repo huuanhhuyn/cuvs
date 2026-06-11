@@ -712,8 +712,6 @@ void log_incoming_edges_histogram(
   raft::mdspan<IdxT, raft::matrix_extent<int64_t>, raft::row_major, AccessorOutputGraph>
     output_graph)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> block_scope(
-    "cagra::graph::optimize/check_edges");
   const uint64_t graph_size          = output_graph.extent(0);
   const uint64_t output_graph_degree = output_graph.extent(1);
 
@@ -775,8 +773,6 @@ void check_duplicates_and_out_of_range(
   raft::mdspan<IdxT, raft::matrix_extent<int64_t>, raft::row_major, AccessorOutputGraph>
     output_graph)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> block_scope(
-    "cagra::graph::optimize/check_duplicates");
 
   const uint64_t graph_size          = output_graph.extent(0);
   const uint64_t output_graph_degree = output_graph.extent(1);
@@ -835,9 +831,6 @@ void merge_graph_gpu(
   const uint64_t graph_size          = output_graph.extent(0);
   const uint64_t output_graph_degree = output_graph.extent(1);
 
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> block_scope(
-    "cagra::graph::optimize/combine");
-
   const double merge_graph_start = cur_time();
 
   auto d_check_num_protected_edges = raft::make_device_scalar<uint32_t>(res, 1u);
@@ -853,6 +846,7 @@ void merge_graph_gpu(
   auto [copy_stream, enable_prefetch] = bli::get_prefetch_stream(res);
   auto workspace_mr                   = raft::resource::get_workspace_resource_ref(res);
 
+  cuvs::common::nvtx::push_range("aaa merge_graph_gpu::d_output_graph");
   bli::batch_load_iterator<
     raft::mdspan<IdxT, raft::matrix_extent<int64_t>, raft::row_major, AccessorOutputGraph>>
     d_output_graph(res,
@@ -863,10 +857,12 @@ void merge_graph_gpu(
                    enable_prefetch,
                    /*initialize=*/true,
                    /*host_writeback=*/true);
-
+  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::push_range("aaa merge_graph_gpu::d_mst_graph");
   bli::batch_load_iterator<raft::host_matrix_view<IdxT, int64_t>> d_mst_graph(
     res, mst_graph, batch_size, copy_stream, workspace_mr, enable_prefetch);
-
+  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::push_range("aaa merge_graph_gpu::d_mst_graph_num_edges");
   bli::batch_load_iterator<raft::host_matrix_view<uint32_t, int64_t>> d_mst_graph_num_edges(
     res,
     raft::make_host_matrix_view<uint32_t, int64_t>(
@@ -875,11 +871,13 @@ void merge_graph_gpu(
     copy_stream,
     workspace_mr,
     enable_prefetch);
-
+  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::push_range("aaa merge_graph_gpu::prefetch_next_batch");
   d_output_graph.prefetch_next_batch();
   d_mst_graph.prefetch_next_batch();
   d_mst_graph_num_edges.prefetch_next_batch();
-
+  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::push_range("aaa merge_graph_gpu::merge_graph");
   const uint32_t num_warps = 4;
   const dim3 threads_merge(raft::WarpSize * num_warps, 1, 1);
   const dim3 blocks_merge(raft::ceildiv(batch_size, num_warps), 1, 1);
@@ -906,13 +904,15 @@ void merge_graph_gpu(
     ++d_output_graph;
     ++d_mst_graph;
     ++d_mst_graph_num_edges;
+    cuvs::common::nvtx::pop_range();
   }
-
+  cuvs::common::nvtx::push_range("aaa merge_graph_gpu::copy_check_num_protected_edges");
   uint32_t check_num_protected_edges = 1u;
   raft::copy(res,
              raft::make_host_scalar_view(&check_num_protected_edges),
              d_check_num_protected_edges.view());
   raft::resource::sync_stream(res);
+  cuvs::common::nvtx::pop_range();
   const auto merge_graph_end = cur_time();
   RAFT_EXPECTS(check_num_protected_edges,
                "Failed to merge the MST, pruned, and reverse edge graphs. "
@@ -933,9 +933,6 @@ void make_reverse_graph_gpu(
 {
   const uint64_t graph_size          = output_graph.extent(0);
   const uint64_t output_graph_degree = output_graph.extent(1);
-
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> block_scope(
-    "cagra::graph::optimize/reverse");
 
   //
   // Make reverse graph
@@ -1603,8 +1600,6 @@ void prune_graph_gpu(
   const uint64_t knn_graph_degree    = knn_graph.extent(1);
   const uint64_t output_graph_degree = output_graph.extent(1);
 
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> block_scope(
-    "cagra::graph::optimize/prune");
 
   // The batchsize is statically set to 256 * 1024 which corresponds to 256MB for a graph
   // degree of 128 and 16byte index type. This is a trade-off between memory usage and performance.
@@ -1742,19 +1737,21 @@ void optimize(
   const uint64_t output_graph_degree = new_graph.extent(1);
   const uint64_t graph_size          = new_graph.extent(0);
 
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "cagra::graph::optimize(%zu, %zu, %u)", graph_size, knn_graph_degree, output_graph_degree);
-
   // MST optimization
   // currently, only using GPU path for MST optimization
   int64_t mst_graph_size = guarantee_connectivity ? graph_size : 0;
+  
+  cuvs::common::nvtx::push_range("aaa optimize::mst_graph");
   auto mst_graph =
     raft::make_host_matrix<IdxT, int64_t, raft::row_major>(mst_graph_size, output_graph_degree);
+  cuvs::common::nvtx::pop_range();
+  
+  cuvs::common::nvtx::push_range("aaa optimize::mst_graph_num_edges");
   auto mst_graph_num_edges = raft::make_host_vector<uint32_t, int64_t>(mst_graph_size);
+  cuvs::common::nvtx::pop_range();
 
   if (guarantee_connectivity) {
-    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> block_scope(
-      "cagra::graph::optimize/check_connectivity");
+    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa optimize::mst_optimization");
     RAFT_LOG_INFO("MST optimization is used to guarantee graph connectivity.");
     mst_optimization<IdxT>(
       res, knn_graph, mst_graph.view(), mst_graph_num_edges.view(), use_gpu_for_mst_optimization);
@@ -1768,20 +1765,27 @@ void optimize(
 
   // prune graph -- will always use GPU path
   {
+    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa optimize::prune_graph_gpu");
     prune_graph_gpu<IdxT>(res, knn_graph, new_graph);
   }
 
+  cuvs::common::nvtx::push_range("aaa optimize::d_rev_graph");
   // reverse graph creation will always use the GPU / large workspace resource
   auto d_rev_graph = raft::make_device_mdarray<IdxT>(
     res, large_tmp_mr, raft::make_extents<int64_t>(graph_size, output_graph_degree));
+  cuvs::common::nvtx::pop_range();
 
+  cuvs::common::nvtx::push_range("aaa optimize::d_rev_graph_count");
   // This should use the default workspace resource for random access / atomics
   auto d_rev_graph_count = raft::make_device_mdarray<uint32_t>(
     res, default_ws_mr, raft::make_extents<int64_t>(graph_size));
+  cuvs::common::nvtx::pop_range();
 
   const double time_make_start = cur_time();
 
+  cuvs::common::nvtx::push_range("aaa optimize::make_reverse_graph_gpu");
   make_reverse_graph_gpu<IdxT>(res, new_graph, d_rev_graph.view(), d_rev_graph_count.view());
+  cuvs::common::nvtx::pop_range();
 
   raft::resource::sync_stream(res);
 
@@ -1791,6 +1795,7 @@ void optimize(
 
   // merge graph -- will always use GPU path
   {
+    cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa optimize::merge_graph_gpu");
     merge_graph_gpu<IdxT>(res,
                           new_graph,
                           d_rev_graph.view(),

@@ -174,8 +174,8 @@ void extend(raft::resources const& handle,
   auto dim     = index->dim();
   list_spec<uint32_t, T, IdxT> list_device_spec{index->dim(),
                                                 index->conservative_memory_allocation()};
-  cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_flat::extend(%zu, %u)", size_t(n_rows), dim);
+  // cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_flat::extend(%zu, %u)", size_t(n_rows), dim);
 
   RAFT_EXPECTS(new_indices != nullptr || index->size() == 0,
                "You must pass data indices when the index is non-empty.");
@@ -398,8 +398,8 @@ inline auto build(raft::resources const& handle,
                   uint32_t dim) -> index<T, IdxT>
 {
   auto stream = raft::resource::get_cuda_stream(handle);
-  cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_flat::build(%zu, %u)", size_t(n_rows), dim);
+  // cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_flat::build(%zu, %u)", size_t(n_rows), dim);
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, half> || std::is_same_v<T, uint8_t> ||
                   std::is_same_v<T, int8_t>,
                 "unsupported data type");
@@ -475,8 +475,8 @@ inline void fill_refinement_index(raft::resources const& handle,
 
   auto stream      = raft::resource::get_cuda_stream(handle);
   uint32_t n_lists = n_queries;
-  common::nvtx::range<common::nvtx::domain::cuvs> fun_scope(
-    "ivf_flat::fill_refinement_index(%zu, %u)", size_t(n_queries));
+  // common::nvtx::range<common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_flat::fill_refinement_index(%zu, %u)", size_t(n_queries));
 
   rmm::device_uvector<LabelT> new_labels(
     n_queries * n_candidates, stream, raft::resource::get_workspace_resource_ref(handle));

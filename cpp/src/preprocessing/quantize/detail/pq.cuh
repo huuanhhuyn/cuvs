@@ -156,12 +156,12 @@ quantizer<MathT> build(
 {
   auto n_rows = dataset.extent(0);
   auto dim    = dataset.extent(1);
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "preprocessing::quantize::pq::build(%zu, %u, %u, %u)",
-    size_t(n_rows),
-    dim,
-    params.pq_bits,
-    params.pq_dim);
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "preprocessing::quantize::pq::build(%zu, %u, %u, %u)",
+    // size_t(n_rows),
+    // dim,
+    // params.pq_bits,
+    // params.pq_dim);
   RAFT_EXPECTS(params.pq_bits >= 4 && params.pq_bits <= 16,
                "PQ bits must be within [4, 16], got %u",
                params.pq_bits);
@@ -205,11 +205,11 @@ void transform(
   raft::device_matrix_view<QuantI, int64_t> pq_codes_out,
   std::optional<raft::device_vector_view<uint32_t, int64_t>> vq_labels = std::nullopt)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "preprocessing::quantize::pq::transform(%zu, %zu, %zu)",
-    size_t(dataset.extent(0)),
-    size_t(dataset.extent(1)),
-    size_t(pq_codes_out.extent(1)));
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "preprocessing::quantize::pq::transform(%zu, %zu, %zu)",
+    // size_t(dataset.extent(0)),
+    // size_t(dataset.extent(1)),
+    // size_t(pq_codes_out.extent(1)));
   RAFT_EXPECTS(pq_codes_out.extent(0) == dataset.extent(0),
                "Output matrix must have the same number of rows as the input dataset");
   RAFT_EXPECTS(pq_codes_out.extent(1) == get_quantized_dim(quantizer.params_quantizer),
@@ -343,11 +343,11 @@ void inverse_transform(
   raft::device_matrix_view<T, int64_t> out,
   std::optional<raft::device_vector_view<const uint32_t, int64_t>> vq_labels = std::nullopt)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "preprocessing::quantize::pq::inverse_transform(%zu, %zu, %zu)",
-    size_t(codes.extent(0)),
-    size_t(codes.extent(1)),
-    size_t(out.extent(1)));
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "preprocessing::quantize::pq::inverse_transform(%zu, %zu, %zu)",
+    // size_t(codes.extent(0)),
+    // size_t(codes.extent(1)),
+    // size_t(out.extent(1)));
   using label_t = uint32_t;
   using idx_t   = int64_t;
   RAFT_EXPECTS(out.extent(0) == codes.extent(0),

@@ -661,8 +661,8 @@ inline void search_with_filtering(raft::resources const& handle,
                                   float* distances,
                                   IvfSampleFilterT sample_filter = IvfSampleFilterT())
 {
-  cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_sq::search(k = %u, n_queries = %u, dim = %zu)", k, n_queries, index.dim());
+  // cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_sq::search(k = %u, n_queries = %u, dim = %zu)", k, n_queries, index.dim());
 
   RAFT_EXPECTS(params.n_probes > 0,
                "n_probes (number of clusters to probe in the search) must be positive.");

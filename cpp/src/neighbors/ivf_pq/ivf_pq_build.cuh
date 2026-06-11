@@ -347,8 +347,6 @@ void train_per_subset(raft::resources const& handle,
   rmm::device_uvector<uint32_t> pq_cluster_sizes(impl->pq_book_size(), stream, device_memory);
 
   for (uint32_t j = 0; j < impl->pq_dim(); j++) {
-    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> pq_per_subspace_scope(
-      "ivf_pq::build::per_subspace[%u]", j);
 
     // Get the rotated cluster centers for each training vector.
     // This will be subtracted from the input vectors afterwards.
@@ -449,8 +447,6 @@ void train_per_cluster(raft::resources const& handle,
   for (uint32_t l = 0; l < impl->n_lists(); l++) {
     auto cluster_size = cluster_sizes.data()[l];
     if (cluster_size == 0) continue;
-    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> pq_per_cluster_scope(
-      "ivf_pq::build::per_cluster[%u](size = %u)", l, cluster_size);
 
     select_residuals(handle,
                      rot_vectors.data(),
@@ -984,9 +980,6 @@ void extend(raft::resources const& handle,
             const IdxT* new_indices,
             IdxT n_rows)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::extend(%zu, %u)", size_t(n_rows), index->dim());
-
   auto stream           = raft::resource::get_cuda_stream(handle);
   const auto n_clusters = index->n_lists();
 
@@ -1235,8 +1228,9 @@ auto build(raft::resources const& handle,
 {
   IdxT n_rows = dataset.extent(0);
   IdxT dim    = dataset.extent(1);
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::build(%zu, %u)", size_t(n_rows), dim);
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa ivf_pq::build", size_t(n_rows), dim);
+
+  cuvs::common::nvtx::push_range("aaa !!! ivf_pq::owning_impl");
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, half> || std::is_same_v<T, uint8_t> ||
                   std::is_same_v<T, int8_t>,
                 "Unsupported data type");
@@ -1262,6 +1256,8 @@ auto build(raft::resources const& handle,
   utils::memzero(impl->data_ptrs().data_handle(), impl->data_ptrs().size(), stream);
   utils::memzero(impl->inds_ptrs().data_handle(), impl->inds_ptrs().size(), stream);
 
+  cuvs::common::nvtx::pop_range();
+  
   {
     raft::random::RngState random_state{137};
     auto trainset_ratio = std::max<size_t>(
@@ -1287,6 +1283,7 @@ auto build(raft::resources const& handle,
     auto trainset = raft::make_device_mdarray<float>(
       handle, big_memory_resource, raft::make_extents<int64_t>(0, 0));
     try {
+      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa ivf_pq::build::trainset");
       trainset = raft::make_device_mdarray<float>(
         handle, big_memory_resource, raft::make_extents<int64_t>(n_rows_train, dim));
     } catch (raft::logic_error& e) {
@@ -1297,28 +1294,31 @@ auto build(raft::resources const& handle,
     }
     // TODO: a proper sampling
     if constexpr (std::is_same_v<T, float>) {
+      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa ivf_pq::build::sample_rows_float");
       raft::matrix::sample_rows<T, int64_t>(handle, random_state, dataset, trainset.view());
     } else {
-      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-        "   ivf_pq::build(%zu, %zu)/sample rows with tmp trainset (%zu rows).",
-        size_t(n_rows),
-        size_t(dim),
-        size_t(n_rows_train));
 
       // TODO(tfeher): Enable codebook generation with any type T, and then remove trainset tmp.
+      cuvs::common::nvtx::push_range("aaa ivf_pq::build::trainset_tmp");
       auto trainset_tmp = raft::make_device_mdarray<T>(
         handle, big_memory_resource, raft::make_extents<int64_t>(n_rows_train, dim));
+      cuvs::common::nvtx::pop_range();
 
+      cuvs::common::nvtx::push_range("aaa ivf_pq::build::sample_rows_other_types");
       raft::matrix::sample_rows<T, int64_t>(handle, random_state, dataset, trainset_tmp.view());
+      cuvs::common::nvtx::pop_range();
 
+      cuvs::common::nvtx::push_range("aaa ivf_pq::build::map_to_float");
       raft::linalg::map(handle,
                         raft::make_device_vector_view<float, int64_t>(trainset.data_handle(),
                                                                       (int64_t)trainset.size()),
                         utils::mapping<float>{},
                         raft::make_const_mdspan(raft::make_device_vector_view<const T, int64_t>(
                           trainset_tmp.data_handle(), (int64_t)trainset.size())));
+      cuvs::common::nvtx::pop_range();
     }
 
+    cuvs::common::nvtx::push_range("aaa ivf_pq::build::k_means_clustering");
     // NB: here cluster_centers is used as if it is [n_clusters, data_dim] not [n_clusters,
     // dim_ext]!
     rmm::device_uvector<float> cluster_centers_buf(
@@ -1381,8 +1381,11 @@ auto build(raft::resources const& handle,
   }
   index<IdxT> idx(std::move(impl));
 
+  cuvs::common::nvtx::pop_range();
+  
   // add the data if necessary
   if (params.add_data_on_build) {
+    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build::extend");
     detail::extend<T, IdxT>(handle, &idx, dataset.data_handle(), nullptr, n_rows);
   }
   return idx;
@@ -1407,7 +1410,6 @@ auto build(raft::resources const& handle,
            raft::device_matrix_view<const float, uint32_t, raft::row_major> rotation_matrix)
   -> cuvs::neighbors::ivf_pq::index<IdxT>
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("ivf_pq::build(%u)", dim);
   auto stream = raft::resource::get_cuda_stream(handle);
 
   auto pq_dim = index_params.pq_dim == 0 ? index<IdxT>::calculate_pq_dim(dim) : index_params.pq_dim;
@@ -1548,8 +1550,6 @@ auto build(
   std::optional<raft::host_matrix_view<const float, uint32_t, raft::row_major>> rotation_matrix)
   -> cuvs::neighbors::ivf_pq::index<IdxT>
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_pq::build_from_host(%u)", dim);
   auto stream = raft::resource::get_cuda_stream(handle);
 
   auto pq_dim = index_params.pq_dim == 0 ? index<IdxT>::calculate_pq_dim(dim) : index_params.pq_dim;

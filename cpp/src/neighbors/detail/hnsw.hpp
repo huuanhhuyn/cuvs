@@ -193,7 +193,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::NONE, std::unique_ptr<index<T>>> fr
   const cuvs::neighbors::cagra::index<T, uint32_t>& cagra_index,
   std::optional<raft::host_matrix_view<const T, int64_t, raft::row_major>> dataset)
 {
-  common::nvtx::range<common::nvtx::domain::cuvs> fun_scope("hnsw::from_cagra<NONE>");
   std::random_device dev;
   std::mt19937 rng(dev());
   std::uniform_int_distribution<std::mt19937::result_type> dist(0);
@@ -221,7 +220,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::CPU, std::unique_ptr<index<T>>> fro
   const cuvs::neighbors::cagra::index<T, uint32_t>& cagra_index,
   std::optional<raft::host_matrix_view<const T, int64_t, raft::row_major>> dataset)
 {
-  common::nvtx::range<common::nvtx::domain::cuvs> fun_scope("hnsw::from_cagra<CPU>");
   auto host_dataset = raft::make_host_matrix<T, int64_t>(0, 0);
   raft::host_matrix_view<const T, int64_t, raft::row_major> host_dataset_view(
     host_dataset.data_handle(), host_dataset.extent(0), host_dataset.extent(1));
@@ -356,8 +354,6 @@ void serialize_to_hnswlib_batched(raft::resources const& res,
                                   cuvs::distance::DistanceType metric,
                                   ReadBatchFn read_batch)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("cagra::serialize");
-
   auto start_time = std::chrono::system_clock::now();
 
   cuvs::util::buffered_ofstream os(&os_raw, 1 << 20 /*1MB*/);
@@ -945,7 +941,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::GPU, std::unique_ptr<index<T>>> fro
   const cuvs::neighbors::cagra::index<T, uint32_t>& cagra_index,
   std::optional<raft::host_matrix_view<const T, int64_t, raft::row_major>> dataset)
 {
-  common::nvtx::range<common::nvtx::domain::cuvs> fun_scope("hnsw::from_cagra<GPU>");
   auto stream = raft::resource::get_cuda_stream(res);
   auto num_threads =
     params.num_threads == 0 ? cuvs::core::omp::get_max_threads() : params.num_threads;
@@ -997,8 +992,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::GPU, std::unique_ptr<index<T>>> fro
   // Initialize linked lists
   auto& levels = appr_algo->element_levels_;
   {
-    common::nvtx::range<common::nvtx::domain::cuvs> block_scope(
-      "parallel::initialize_data<%s>(%d threads)", device_copy ? "device" : "host", num_threads);
     /* Note: batching
 
     If the dataset is on the device, we want to copy it to HNSW in parallel to the rest of the
@@ -1093,7 +1086,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::GPU, std::unique_ptr<index<T>>> fro
 
   // iterate over the points in the descending order of their levels
   for (size_t pt_level = hist.size() - 1; pt_level >= 1; pt_level--) {
-    common::nvtx::range<common::nvtx::domain::cuvs> level_scope("level %zu", pt_level);
     auto start_idx     = offsets[pt_level - 1];
     auto end_idx       = offsets[hist.size() - 1];
     auto num_pts       = end_idx - start_idx;
@@ -1123,8 +1115,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::GPU, std::unique_ptr<index<T>>> fro
                         cagra_index.metric());
 
     {
-      common::nvtx::range<common::nvtx::domain::cuvs> copy_scope(
-        "get_linklist(%zu, %zu)", start_idx, end_idx);
       // add points to the HNSW index upper layers
 #pragma omp parallel for num_threads(num_threads)
       for (auto i = start_idx; i < end_idx; i++) {
@@ -1154,7 +1144,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::GPU, std::unique_ptr<index<T>>> fro
 
   // copy cagra graph to hnswlib base layer
   if (is_host_accessible) {
-    common::nvtx::range<common::nvtx::domain::cuvs> copy_scope("get_linklist0<host>");
 #pragma omp parallel for num_threads(num_threads)
     for (int64_t i = 0; i < n_rows; i++) {
       auto ll_i = appr_algo->get_linklist0(i);
@@ -1165,7 +1154,6 @@ std::enable_if_t<hierarchy == HnswHierarchy::GPU, std::unique_ptr<index<T>>> fro
       }
     }
   } else {
-    common::nvtx::range<common::nvtx::domain::cuvs> copy_scope("get_linklist0<device>");
     RAFT_CUDA_TRY(cudaMemcpy2DAsync(appr_algo->get_linklist0(0) + 1,
                                     appr_algo->size_data_per_element_,
                                     graph_ptr,
@@ -1485,7 +1473,6 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
                                 const index_params& params,
                                 raft::host_matrix_view<const T, int64_t, raft::row_major> dataset)
 {
-  common::nvtx::range<common::nvtx::domain::cuvs> fun_scope("hnsw::build<ACE>");
 
   cuvs::neighbors::cagra::index_params cagra_params;
 
@@ -1493,6 +1480,7 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
   // heuristic that falls back to ACE only when an in-memory CAGRA build would not fit in
   // the available host/device memory.
   bool use_ace = std::holds_alternative<graph_build_params::ace_params>(params.graph_build_params);
+  std::cout << "use ace: " << use_ace << std::endl;
 
   if (std::holds_alternative<std::monostate>(params.graph_build_params)) {
     cagra_params = cagra::index_params::from_hnsw_params(
@@ -1502,8 +1490,12 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
       cagra::hnsw_heuristic_type::SAME_GRAPH_FOOTPRINT,  // SIMILAR_SEARCH_PERFORMANCE,
       params.metric);
 
+    cuvs::common::nvtx::push_range("aaa cagra_build_mem_usage");
     auto [required_host, required_dev] = cuvs::neighbors::cagra::helpers::cagra_build_mem_usage(
       res, dataset.extents(), sizeof(T), cagra_params);
+    cuvs::common::nvtx::pop_range();
+
+    cuvs::common::nvtx::push_range("aaa no_alloc get_available_memory");
     auto [available_host, available_dev] = get_available_memory();
 
     RAFT_LOG_INFO("CAGRA in memory build, required host mem %4.1f GB, GPU mem %4.1f GB",
@@ -1519,8 +1511,11 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
       RAFT_LOG_INFO(
         "Not enough host or device memory. Falling back to ACE build with disk spilling");
     }
+    cuvs::common::nvtx::pop_range();
   }
+
   if (use_ace) {
+    common::nvtx::range<common::nvtx::domain::cuvs> r("aaa ace_params");
     auto ace_params =
       std::holds_alternative<graph_build_params::ace_params>(params.graph_build_params)
         ? std::get<graph_build_params::ace_params>(params.graph_build_params)
@@ -1550,12 +1545,17 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
       cagra_ace_params.ef_construction);
   }
   // Build CAGRA index optionally using ACE
+  cuvs::common::nvtx::push_range("aaa cagra::build");
   auto cagra_index = cuvs::neighbors::cagra::build(res, cagra_params, dataset);
+  cuvs::common::nvtx::pop_range();
 
   RAFT_LOG_INFO("hnsw::build - Converting CAGRA index to HNSW format");
 
   // Convert CAGRA index to HNSW index
-  return from_cagra<T>(res, params, cagra_index, dataset);
+  cuvs::common::nvtx::push_range("aaa from_cagra");
+  auto hnsw_index = from_cagra<T>(res, params, cagra_index, dataset);
+  cuvs::common::nvtx::pop_range();
+  return hnsw_index;
 }
 
 }  // namespace cuvs::neighbors::hnsw::detail
