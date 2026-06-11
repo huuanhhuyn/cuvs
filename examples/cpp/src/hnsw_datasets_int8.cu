@@ -10,6 +10,7 @@
  #include <raft/core/logger.hpp>
  #include <raft/core/resources.hpp>
  #include <raft/random/make_blobs.cuh>
+ #include <raft/util/memory_tracking_resources.hpp>
  #include <string>
  
  #include <cuvs/preprocessing/quantize/scalar.hpp>
@@ -131,7 +132,9 @@
          return EXIT_FAILURE;
      }
  
-     raft::resources res;
+     raft::resources res_untracked;
+     const char* csv_path = "datasets_int8.csv";
+     raft::memory_tracking_resources res(res_untracked, csv_path, std::chrono::milliseconds(1));
  
      // Define a pool allocator for temporary arrays. Internal arrays would use the pool, any other allocation
      // uses the default RMM memory resource. We set a pool with 2 GiB upper limit.
@@ -191,4 +194,5 @@
      auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time);
      double avg_time_seconds = duration.count() / 1000.0;
      std::cout << "HNSW index created in in " << avg_time_seconds << " seconds" << std::endl;
+     std::cout << "Tracking stats: " << csv_path << std::endl;
  }

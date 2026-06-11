@@ -1228,9 +1228,9 @@ auto build(raft::resources const& handle,
 {
   IdxT n_rows = dataset.extent(0);
   IdxT dim    = dataset.extent(1);
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa ivf_pq::build", size_t(n_rows), dim);
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build", size_t(n_rows), dim);
 
-  cuvs::common::nvtx::push_range("aaa !!! ivf_pq::owning_impl");
+  cuvs::common::nvtx::push_range("!!! ivf_pq::owning_impl");
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, half> || std::is_same_v<T, uint8_t> ||
                   std::is_same_v<T, int8_t>,
                 "Unsupported data type");
@@ -1283,7 +1283,9 @@ auto build(raft::resources const& handle,
     auto trainset = raft::make_device_mdarray<float>(
       handle, big_memory_resource, raft::make_extents<int64_t>(0, 0));
     try {
-      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa ivf_pq::build::trainset");
+      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build::trainset");
+      std::cout << "real: n_rows_train: " << n_rows_train << std::endl;
+      std::cout << "real: dim: " << dim << std::endl;
       trainset = raft::make_device_mdarray<float>(
         handle, big_memory_resource, raft::make_extents<int64_t>(n_rows_train, dim));
     } catch (raft::logic_error& e) {
@@ -1294,21 +1296,21 @@ auto build(raft::resources const& handle,
     }
     // TODO: a proper sampling
     if constexpr (std::is_same_v<T, float>) {
-      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("aaa ivf_pq::build::sample_rows_float");
+      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build::sample_rows_float");
       raft::matrix::sample_rows<T, int64_t>(handle, random_state, dataset, trainset.view());
     } else {
 
       // TODO(tfeher): Enable codebook generation with any type T, and then remove trainset tmp.
-      cuvs::common::nvtx::push_range("aaa ivf_pq::build::trainset_tmp");
+      cuvs::common::nvtx::push_range("ivf_pq::build::trainset_tmp");
       auto trainset_tmp = raft::make_device_mdarray<T>(
         handle, big_memory_resource, raft::make_extents<int64_t>(n_rows_train, dim));
       cuvs::common::nvtx::pop_range();
 
-      cuvs::common::nvtx::push_range("aaa ivf_pq::build::sample_rows_other_types");
+      cuvs::common::nvtx::push_range("ivf_pq::build::sample_rows_other_types");
       raft::matrix::sample_rows<T, int64_t>(handle, random_state, dataset, trainset_tmp.view());
       cuvs::common::nvtx::pop_range();
 
-      cuvs::common::nvtx::push_range("aaa ivf_pq::build::map_to_float");
+      cuvs::common::nvtx::push_range("ivf_pq::build::map_to_float");
       raft::linalg::map(handle,
                         raft::make_device_vector_view<float, int64_t>(trainset.data_handle(),
                                                                       (int64_t)trainset.size()),
@@ -1318,7 +1320,7 @@ auto build(raft::resources const& handle,
       cuvs::common::nvtx::pop_range();
     }
 
-    cuvs::common::nvtx::push_range("aaa ivf_pq::build::k_means_clustering");
+    cuvs::common::nvtx::push_range("ivf_pq::build::k_means_clustering");
     // NB: here cluster_centers is used as if it is [n_clusters, data_dim] not [n_clusters,
     // dim_ext]!
     rmm::device_uvector<float> cluster_centers_buf(

@@ -1473,7 +1473,7 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
                                 const index_params& params,
                                 raft::host_matrix_view<const T, int64_t, raft::row_major> dataset)
 {
-
+  common::nvtx::range<common::nvtx::domain::cuvs> r("hnsw::build");
   cuvs::neighbors::cagra::index_params cagra_params;
 
   // If the user explicitly configured ACE, honor it. Otherwise (default params) apply a
@@ -1490,12 +1490,12 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
       cagra::hnsw_heuristic_type::SAME_GRAPH_FOOTPRINT,  // SIMILAR_SEARCH_PERFORMANCE,
       params.metric);
 
-    cuvs::common::nvtx::push_range("aaa cagra_build_mem_usage");
+    cuvs::common::nvtx::push_range("hnsw::build::cagra_build_mem_usage");
     auto [required_host, required_dev] = cuvs::neighbors::cagra::helpers::cagra_build_mem_usage(
       res, dataset.extents(), sizeof(T), cagra_params);
     cuvs::common::nvtx::pop_range();
 
-    cuvs::common::nvtx::push_range("aaa no_alloc get_available_memory");
+    cuvs::common::nvtx::push_range("no_alloc hnsw::build::get_available_memory");
     auto [available_host, available_dev] = get_available_memory();
 
     RAFT_LOG_INFO("CAGRA in memory build, required host mem %4.1f GB, GPU mem %4.1f GB",
@@ -1515,7 +1515,7 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
   }
 
   if (use_ace) {
-    common::nvtx::range<common::nvtx::domain::cuvs> r("aaa ace_params");
+    common::nvtx::range<common::nvtx::domain::cuvs> r("hnsw::build::ace_params");
     auto ace_params =
       std::holds_alternative<graph_build_params::ace_params>(params.graph_build_params)
         ? std::get<graph_build_params::ace_params>(params.graph_build_params)
@@ -1545,14 +1545,14 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
       cagra_ace_params.ef_construction);
   }
   // Build CAGRA index optionally using ACE
-  cuvs::common::nvtx::push_range("aaa cagra::build");
+  cuvs::common::nvtx::push_range("hnsw::build::cagra::build");
   auto cagra_index = cuvs::neighbors::cagra::build(res, cagra_params, dataset);
   cuvs::common::nvtx::pop_range();
 
   RAFT_LOG_INFO("hnsw::build - Converting CAGRA index to HNSW format");
 
   // Convert CAGRA index to HNSW index
-  cuvs::common::nvtx::push_range("aaa from_cagra");
+  cuvs::common::nvtx::push_range("hnsw::build::from_cagra");
   auto hnsw_index = from_cagra<T>(res, params, cagra_index, dataset);
   cuvs::common::nvtx::pop_range();
   return hnsw_index;

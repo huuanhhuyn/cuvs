@@ -10,6 +10,9 @@
 #include <utility>
 
 namespace cuvs::neighbors::cagra::helpers {
+// Helpers to convert bytes to MiB and GiB
+constexpr double to_mib(size_t bytes) { return static_cast<double>(bytes) / (1 << 20); }
+constexpr double to_gib(size_t bytes) { return static_cast<double>(bytes) / (1 << 30); }
 // Calculate CAGRA optimize workspace memory requirements.
 // This is the working memory on top of the input/output memory usage.
 std::tuple<size_t, size_t, size_t, size_t> optimize_workspace_size(size_t n_rows,
@@ -40,27 +43,39 @@ std::tuple<size_t, size_t, size_t, size_t> optimize_workspace_size(size_t n_rows
   // Prune stage memory
   // We neglect 8 bytes (both on host and device) for stats
   size_t prune_dev_fixed = batch_size * intermediate_degree * 1;  // detour count (uint8_t)
-  prune_dev_fixed += batch_size * sizeof(uint32_t);               // d_num_detour_edges
+  // CHECK ME: d_num_detour_edges is not used anywhere
+  // prune_dev_fixed += batch_size * sizeof(uint32_t);               // d_num_detour_edges
   prune_dev_fixed += 2 * batch_size * graph_degree * index_size;  // d_output_graph(2*batch)
+  std::cout << "prune stage: d_output_graph: " << to_mib(prune_dev_fixed) << " MiB" << std::endl;
 
   size_t prune_dev = n_rows * intermediate_degree * index_size;  // d_input_graph
+  std::cout << "prune stage: d_input_graph: " << std::fixed << std::setprecision(2) << to_mib(prune_dev) << " MiB" << std::endl;
   prune_dev += prune_dev_fixed;
+  std::cout << "prune stage: input+output graph: " << std::fixed << std::setprecision(2) << to_mib(prune_dev) << " MiB" << std::endl;
 
   // Reverse graph stage memory
   size_t rev_dev = n_rows * graph_degree * index_size;  // d_rev_graph
+  std::cout << "d_rev_graph: " << std::fixed << std::setprecision(2) << to_mib(rev_dev) << " MiB" << std::endl;
   rev_dev += n_rows * sizeof(uint32_t);                 // d_rev_graph_count
+  std::cout << "d_rev_graph_count: " << std::fixed << std::setprecision(2) << to_mib(n_rows * sizeof(uint32_t)) << " MiB" << std::endl;
   rev_dev += n_rows * index_size;                       // d_dest_nodes
+  std::cout << "d_dest_nodes: " << std::fixed << std::setprecision(2) << to_mib(n_rows * index_size) << " MiB" << std::endl;
 
   // Memory for merging graphs (host only optional)
   size_t combine_host_fixed = graph_degree * sizeof(uint32_t);  // histogram
   size_t combine_host       = n_rows * sizeof(uint32_t);        // n_edge_count
   combine_host += combine_host_fixed;
+  std::cout << "histogram: " << std::fixed << std::setprecision(2) << to_mib(combine_host_fixed) << " MiB" << std::endl;
+  std::cout << "n_edge_count: " << std::fixed << std::setprecision(2) << to_mib(n_rows * sizeof(uint32_t)) << " MiB" << std::endl;
 
   // additional memory for combine stage on device (3 batches)
   size_t combine_dev_fixed = 2 * batch_size * graph_degree * index_size;  // d_output_graph(2*batch)
+  std::cout << "combine stage: d_output_graph: " << std::fixed << std::setprecision(2) << to_mib(combine_dev_fixed) << " MiB" << std::endl;
   if (mst_optimize) {
     combine_dev_fixed += 2 * batch_size * graph_degree * index_size;  // d_mst_graph(2*batch)
     combine_dev_fixed += 2 * batch_size * sizeof(uint32_t);  // d_mst_graph_num_edges(2*batch)
+    std::cout << "combine stage: d_mst_graph: " << std::fixed << std::setprecision(2) << to_mib(2 * batch_size * graph_degree * index_size) << " MiB" << std::endl;
+    std::cout << "combine stage: d_mst_graph_num_edges: " << std::fixed << std::setprecision(2) << to_mib(2 * batch_size * sizeof(uint32_t)) << " MiB" << std::endl;
   }
   size_t combine_dev = combine_dev_fixed;
 
@@ -68,6 +83,12 @@ std::tuple<size_t, size_t, size_t, size_t> optimize_workspace_size(size_t n_rows
   size_t total_host_fixed = mst_host_fixed + combine_host_fixed;
   size_t total_dev        = std::max(prune_dev, rev_dev + combine_dev);
   size_t total_dev_fixed  = std::max(prune_dev_fixed, combine_dev_fixed);
+
+  std::cout << "total_host: " << std::fixed << std::setprecision(2) << to_mib(total_host) << " MiB" << std::endl;
+  std::cout << "total_dev: " << std::fixed << std::setprecision(2) << to_mib(total_dev) << " MiB" << std::endl;
+  std::cout << "total_host_fixed: " << std::fixed << std::setprecision(2) << to_mib(total_host_fixed) << " MiB" << std::endl;
+  std::cout << "total_dev_fixed: " << std::fixed << std::setprecision(2) << to_mib(total_dev_fixed) << " MiB" << std::endl;
+  std::cout << "--------------------------------" << std::endl;
 
   return std::make_tuple(total_host, total_dev, total_host_fixed, total_dev_fixed);
 }
@@ -84,7 +105,12 @@ inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
 
   size_t dataset_gpu_mem =
     cuvs::neighbors::ivf_pq::helpers::compressed_dataset_size(res, dataset, params.build_params);
+  std::cout << "ivf_pq_build_mem_usage: dataset_gpu_mem: " << to_mib(dataset_gpu_mem) << " MiB" << std::endl;
   size_t graph_host_mem = n_rows * (graph_degree + intermediate_graph_degree) * sizeof(uint32_t);
+  std::cout << "ivf_pq_build_mem_usage: graph_degree: " << graph_degree << std::endl;
+  std::cout << "ivf_pq_build_mem_usage: intermediate_graph_degree: " << intermediate_graph_degree << std::endl;
+  std::cout << "ivf_pq_build_mem_usage: n_rows: " << n_rows << std::endl;
+  std::cout << "ivf_pq_build_mem_usage: graph_host_mem: " << to_mib(graph_host_mem) << " MiB" << std::endl;
 
   auto [host_workspace_size,
         gpu_workspace_size,
@@ -101,10 +127,15 @@ inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
                               params.build_params.n_lists));
   size_t kmeans_n_rows  = n_rows / kmeans_trainset_ratio;
   size_t kmeans_gpu_mem = kmeans_n_rows * dataset.extent(1) * sizeof(float);
+  std::cout << "ivf_pq_build_mem_usage: kmeans_trainset_ratio: " << kmeans_trainset_ratio << std::endl;
+  std::cout << "ivf_pq_build_mem_usage: kmeans_n_rows: " << kmeans_n_rows << std::endl;
+  std::cout << "ivf_pq_build_mem_usage: kmeans_gpu_mem: " << to_mib(kmeans_gpu_mem) << " MiB" << std::endl;
 
   size_t total_host =
     graph_host_mem + host_workspace_size + 2e9;  // added 2 GB extra workspace (IVF-PQ search)
   size_t total_dev = std::max({kmeans_gpu_mem, dataset_gpu_mem, gpu_workspace_size}) + 1e9;
+  std::cout << "ivf_pq_build_mem_usage: total_host (w/o buffer): " << to_mib(total_host - 2e9) << " MiB" << std::endl;
+  std::cout << "ivf_pq_build_mem_usage: total_dev (w/o buffer): " << to_mib(total_dev - 1e9) << " MiB" << std::endl;
 
   return std::make_pair(total_host, total_dev);
 }
@@ -125,6 +156,8 @@ std::pair<size_t, size_t> cagra_build_mem_usage(raft::resources const& res,
       std::get<graph_build_params::ivf_pq_params>(cparams.graph_build_params);
     std::tie(total_host, total_dev) = ivf_pq_build_mem_usage(
       res, dataset, pq_params, cparams.graph_degree, cparams.intermediate_graph_degree);
+    std::cout << "ivf_pq_build_mem_usage: total_host: " << to_mib(total_host) << " MiB" << std::endl;
+    std::cout << "ivf_pq_build_mem_usage: total_dev: " << to_mib(total_dev) << " MiB" << std::endl;
   } else if (std::holds_alternative<graph_build_params::nn_descent_params>(
                cparams.graph_build_params)) {
     RAFT_LOG_INFO("Considering CAGRA in memory build with NN-descent");
@@ -136,6 +169,8 @@ std::pair<size_t, size_t> cagra_build_mem_usage(raft::resources const& res,
                    sizeof(uint32_t) +
                  2e9;  // Extra buffer
     total_dev = total_host;
+    std::cout << "nn_descent_build_mem_usage: total_host: " << to_mib(total_host - 2e9) << " MiB" << std::endl;
+    std::cout << "nn_descent_build_mem_usage: total_dev: " << to_mib(total_dev - 2e9) << " MiB" << std::endl;
   } else {
     // iterative build
     // TODO(tfeher): proper estimate
@@ -144,6 +179,8 @@ std::pair<size_t, size_t> cagra_build_mem_usage(raft::resources const& res,
                    sizeof(uint32_t) +
                  2e9;  // Extra buffer
     total_dev = total_host;
+    std::cout << "iterative_build_mem_usage: total_host: " << to_mib(total_host - 2e9) << " MiB" << std::endl;
+    std::cout << "iterative_build_mem_usage: total_dev: " << to_mib(total_dev - 2e9) << " MiB" << std::endl;
   }
   return std::make_pair(total_host, total_dev);
 }
