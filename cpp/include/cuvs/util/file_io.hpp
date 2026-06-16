@@ -205,8 +205,24 @@ std::pair<file_descriptor, size_t> create_numpy_file(const std::string& path,
   }
 
   // Pre-allocate file space
-  if (posix_fallocate(fd.get(), 0, header_size + data_bytes) != 0) {
-    RAFT_FAIL("Failed to pre-allocate space for file: %s", path.c_str());
+  const size_t total_file_size = header_size + data_bytes;
+  RAFT_LOG_INFO("Pre-allocating file '%s': header=%zu bytes, data=%zu bytes, total=%zu bytes",
+                path.c_str(),
+                header_size,
+                data_bytes,
+                total_file_size);
+  int alloc_err = posix_fallocate(fd.get(), 0, total_file_size);
+  if (alloc_err == EOPNOTSUPP || alloc_err == EINVAL) {
+    // tmpfs and some network filesystems do not support posix_fallocate; fall back to ftruncate
+    RAFT_LOG_DEBUG(
+      "posix_fallocate not supported on '%s' (errno=%d), falling back to ftruncate", path.c_str(), alloc_err);
+    if (ftruncate(fd.get(), static_cast<off_t>(total_file_size)) != 0) {
+      RAFT_FAIL(
+        "Failed to pre-allocate space for file: %s (errno: %d, %s)", path.c_str(), errno, strerror(errno));
+    }
+  } else if (alloc_err != 0) {
+    RAFT_FAIL(
+      "Failed to pre-allocate space for file: %s (errno: %d, %s)", path.c_str(), alloc_err, strerror(alloc_err));
   }
 
   // Seek to beginning and write header

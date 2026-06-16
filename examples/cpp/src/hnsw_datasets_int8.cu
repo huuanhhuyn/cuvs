@@ -102,14 +102,17 @@
      uint32_t shape_[2];
  };
  
+ enum class build_mode { no_ace, ace, ace_use_disk };
+
  int main(int argc, char *argv[])
  {
      using namespace cuvs::neighbors;
- 
+
      const char *index_save_path = nullptr;
      uint32_t max_dataset_rows = 0;
+     build_mode mode = build_mode::no_ace;
      std::vector<const char *> positional_args;
- 
+
      for (int i = 1; i < argc; i++)
      {
          if (std::strcmp(argv[i], "-o") == 0 && i + 1 < argc)
@@ -120,20 +123,49 @@
          {
              max_dataset_rows = std::atoi(argv[++i]);
          }
+         else if (std::strcmp(argv[i], "-m") == 0 && i + 1 < argc)
+         {
+             std::string m = argv[++i];
+             if (m == "no_ace")
+             {
+                 mode = build_mode::no_ace;
+             }
+             else if (m == "ace")
+             {
+                 mode = build_mode::ace;
+             }
+             else if (m == "ace_use_disk")
+             {
+                 mode = build_mode::ace_use_disk;
+             }
+             else
+             {
+                 std::cerr << "Invalid -m value: " << m << " (expected no_ace|ace|ace_use_disk)" << std::endl;
+                 return EXIT_FAILURE;
+             }
+         }
          else
          {
              positional_args.push_back(argv[i]);
          }
      }
- 
+
      if (positional_args.size() != 1)
      {
-         std::cerr << "Usage: " << argv[0] << "  [-o index_file] [-n max_rows] <dataset_file>" << std::endl;
+         std::cerr << "Usage: " << argv[0] << "  [-o index_file] [-n max_rows] [-m no_ace|ace|ace_use_disk] <dataset_file>" << std::endl;
          return EXIT_FAILURE;
      }
  
      raft::resources res_untracked;
-     const char* csv_path = "datasets_int8.csv";
+     const char* mode_str = (mode == build_mode::ace_use_disk) ? "ace_use_disk"
+                            : (mode == build_mode::ace)        ? "ace"
+                                                               : "no_ace";
+     // Derive a dataset name from the input path, e.g. "/datasets/gist_1M/base.fbin" -> "gist_1M_base".
+     std::filesystem::path dataset_path(positional_args[0]);
+     std::string dataset_name =
+         dataset_path.parent_path().filename().string() + "_" + dataset_path.stem().string();
+     std::string csv_path_str = "datasets_int8_" + dataset_name + "_" + mode_str + ".csv";
+     const char* csv_path     = csv_path_str.c_str();
      raft::memory_tracking_resources res(res_untracked, csv_path, std::chrono::milliseconds(1));
  
      // Define a pool allocator for temporary arrays. Internal arrays would use the pool, any other allocation
@@ -183,6 +215,20 @@
     params.M               = 24;
     params.ef_construction = 200;
     params.hierarchy       = cuvs::neighbors::hnsw::HnswHierarchy::GPU;
+
+    if (mode == build_mode::no_ace)
+    {
+        std::cout << "Using non-ACE graph build" << std::endl;
+    }
+    else
+    {
+        auto ace_params           = hnsw::graph_build_params::ace_params();
+        ace_params.npartitions    = 4;
+        ace_params.build_dir      = "/tmp/hnsw_ace_build";
+        ace_params.use_disk       = (mode == build_mode::ace_use_disk);
+        params.graph_build_params = ace_params;
+        std::cout << "Using ACE graph build (use_disk=" << std::boolalpha << ace_params.use_disk << ")" << std::endl;
+    }
 
     std::cout << "Building HNSW index" << std::endl;
     auto hnsw_index = hnsw::build(res, params, quantized_dataset.view());

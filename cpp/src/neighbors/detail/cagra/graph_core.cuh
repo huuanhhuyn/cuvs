@@ -906,8 +906,8 @@ void merge_graph_gpu(
     ++d_output_graph;
     ++d_mst_graph;
     ++d_mst_graph_num_edges;
-    cuvs::common::nvtx::pop_range();
   }
+  cuvs::common::nvtx::pop_range();
   cuvs::common::nvtx::push_range("optimize::merge::copy_check_num_protected_edges");
   uint32_t check_num_protected_edges = 1u;
   raft::copy(res,
@@ -953,15 +953,15 @@ void make_reverse_graph_gpu(
         output_graph, d_rev_graph, d_rev_graph_count, k);
     }
   } else {
-    cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::d_dest_nodes (host)");
+    cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::d_dest_nodes");
     // CHECK ME: Move this device allocation to default workspace resource
     auto d_dest_nodes = raft::make_device_matrix<IdxT, int64_t>(res, graph_size, 1);
     cuvs::common::nvtx::pop_range();
-    cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::dest_nodes (host)");
+    cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::dest_nodes");
     auto dest_nodes   = raft::make_host_vector<IdxT, int64_t>(graph_size);
     cuvs::common::nvtx::pop_range();
     for (uint64_t k = 0; k < output_graph_degree; k++) {
-      cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::copy_dest_nodes (host)");
+      cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::copy_dest_nodes");
 #pragma omp parallel for
       for (uint64_t i = 0; i < graph_size; i++) {
         dest_nodes(i) = output_graph(i, k);
@@ -969,7 +969,7 @@ void make_reverse_graph_gpu(
       raft::copy(res, d_dest_nodes.view(), raft::make_const_mdspan(dest_nodes.view()));
       cuvs::common::nvtx::pop_range();
 
-      cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::make_rev_graph_k (host)");
+      cuvs::common::nvtx::push_range("optimize::make_reverse_graph_gpu::make_rev_graph_k");
       dim3 threads(256, 1, 1);
       dim3 blocks(1024, 1, 1);
       kern_make_rev_graph_k<<<blocks, threads, 0, raft::resource::get_cuda_stream(res)>>>(
@@ -1213,7 +1213,10 @@ void mst_optimization(
 
   // Allocate temporal arrays
   const uint32_t mst_graph_degree = output_graph_degree;
+  cuvs::common::nvtx::push_range("optimize::mst_optimization::mst_graph");
   auto mst_graph              = raft::make_host_matrix<IdxT, int64_t>(graph_size, mst_graph_degree);
+  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::push_range("optimize::mst_optimization::work_vectors");
   auto outgoing_max_edges     = raft::make_host_vector<IdxT, int64_t>(graph_size);
   auto incoming_max_edges     = raft::make_host_vector<IdxT, int64_t>(graph_size);
   auto outgoing_num_edges     = raft::make_host_vector<IdxT, int64_t>(graph_size);
@@ -1221,6 +1224,7 @@ void mst_optimization(
   auto label                  = raft::make_host_vector<IdxT, int64_t>(graph_size);
   auto cluster_size           = raft::make_host_vector<IdxT, int64_t>(graph_size);
   auto candidate_edges        = raft::make_host_vector<IdxT, int64_t>(graph_size);
+  cuvs::common::nvtx::pop_range();
   auto mst_graph_ptr          = mst_graph.data_handle();
   auto outgoing_max_edges_ptr = outgoing_max_edges.data_handle();
   auto incoming_max_edges_ptr = incoming_max_edges.data_handle();
@@ -1251,8 +1255,11 @@ void mst_optimization(
     // (*) If GPU is not used, arrays of size 0 are created.
     d_graph_size = 0;
   }
+  cuvs::common::nvtx::push_range("optimize::mst_optimization::d_mst_graph");
   auto d_mst_graph_num_edges = raft::make_device_vector<IdxT, int64_t>(res, d_graph_size);
   auto d_mst_graph = raft::make_device_matrix<IdxT, int64_t>(res, d_graph_size, mst_graph_degree);
+  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::push_range("optimize::mst_optimization::d_work_vectors");
   auto d_outgoing_max_edges      = raft::make_device_vector<IdxT, int64_t>(res, d_graph_size);
   auto d_incoming_max_edges      = raft::make_device_vector<IdxT, int64_t>(res, d_graph_size);
   auto d_outgoing_num_edges      = raft::make_device_vector<IdxT, int64_t>(res, d_graph_size);
@@ -1260,6 +1267,7 @@ void mst_optimization(
   auto d_label                   = raft::make_device_vector<IdxT, int64_t>(res, d_graph_size);
   auto d_cluster_size            = raft::make_device_vector<IdxT, int64_t>(res, d_graph_size);
   auto d_candidate_edges         = raft::make_device_vector<IdxT, int64_t>(res, d_graph_size);
+  cuvs::common::nvtx::pop_range();
   auto d_mst_graph_num_edges_ptr = d_mst_graph_num_edges.data_handle();
   auto d_mst_graph_ptr           = d_mst_graph.data_handle();
   auto d_outgoing_max_edges_ptr  = d_outgoing_max_edges.data_handle();
@@ -1790,7 +1798,6 @@ void optimize(
 
   // prune graph -- will always use GPU path
   {
-    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("optimize::prune_graph_gpu");
     prune_graph_gpu<IdxT>(res, knn_graph, new_graph);
   }
 

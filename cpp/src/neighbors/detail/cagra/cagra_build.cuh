@@ -483,7 +483,7 @@ void ace_reorder_and_store_dataset(
   size_t augmented_header_size,
   size_t mapping_header_size)
 {
-  common::nvtx::range<common::nvtx::domain::cuvs> r("cagra_build::ace_reorder_and_store_dataset");
+  common::nvtx::range<common::nvtx::domain::cuvs> r("build_ace::ace_reorder_and_store_dataset");
   auto start = std::chrono::high_resolution_clock::now();
 
   size_t dataset_size = dataset.extent(0);
@@ -821,8 +821,8 @@ struct ace_memory_requirements {
 // TODO: Adjust overhead factor if needed. Very conservative for now.
 constexpr double usable_cpu_memory_fraction = 0.8;
 constexpr double usable_gpu_memory_fraction = 0.8;
-constexpr double imbalance_factor           = 3.0;
-constexpr double vector_expansion_factor    = 2.0;
+constexpr double imbalance_factor           = 1.0;
+constexpr double vector_expansion_factor    = 1.0;
 
 // Check if disk mode should be used for ACE based on memory constraints
 template <typename T, typename IdxT>
@@ -862,10 +862,17 @@ bool ace_check_use_disk_mode(bool use_disk,
   //   n_partitions) * (intermediate + final) * sizeof(IdxT)
   //   - Final assembled graph: dataset_size * graph_degree * sizeof(IdxT)
   mem.partition_labels_size = 2 * dataset_size * sizeof(IdxT);
-  mem.id_mapping_size       = 2 * dataset_size * sizeof(IdxT);
+  std::cout << "----- ACE: partition_labels_size: " << to_mib(mem.partition_labels_size) << " MiB" << std::endl;
+  mem.id_mapping_size       = 2 * dataset_size * sizeof(IdxT);  //CHECK ME: Add missing estimates (augmented_backward_mapping, core_partition_offsets, augmented_partition_offsets)
+  std::cout << "----- ACE: id_mapping_size: " << to_mib(mem.id_mapping_size) << " MiB" << std::endl;
   mem.sub_dataset_size      = sub_partition_size * dataset_dim * sizeof(T);
+  std::cout << "----- ACE: sub_partition_size: " << sub_partition_size << " vectors" << std::endl;
+  std::cout << "----- ACE: dataset_dim: " << dataset_dim << " dimensions" << std::endl;
+  std::cout << "----- ACE: sub_dataset_size: " << to_mib(mem.sub_dataset_size) << " MiB" << std::endl;
   mem.sub_graph_size   = sub_partition_size * (intermediate_degree + graph_degree) * sizeof(IdxT);
+  std::cout << "----- ACE: sub_graph_size: " << to_mib(mem.sub_graph_size) << " MiB" << std::endl;
   mem.cagra_graph_size = dataset_size * graph_degree * sizeof(IdxT);
+  std::cout << "----- ACE: cagra_graph_size: " << to_mib(mem.cagra_graph_size) << " MiB" << std::endl;
   mem.total_size       = mem.partition_labels_size + mem.id_mapping_size + mem.sub_dataset_size +
                    mem.sub_graph_size + mem.cagra_graph_size + opt_host_ws_total + 2e9;
 
@@ -891,6 +898,9 @@ bool ace_check_use_disk_mode(bool use_disk,
   // * optimize workspace (opt_dev_ws_total)
   // + some extra workspace (IVF-PQ search, ...)
   size_t gpu_memory_required = std::max(mem.sub_dataset_size, opt_dev_ws_total) + 2e9;
+  std::cout << "----- ACE: host_memory_required: " << to_gib(mem.total_size - 2e9) << " GiB" << std::endl;
+  std::cout << "----- ACE: gpu_memory_required: " << to_gib(gpu_memory_required - 2e9) << " GiB" << std::endl;
+  std::cout << "--------------------------------" << std::endl;
 
   bool gpu_memory_limited = static_cast<size_t>(usable_gpu_memory_fraction *
                                                 mem.available_gpu_memory) < gpu_memory_required;
@@ -948,7 +958,7 @@ void ace_validate_disk_mode_partitions(size_t& n_partitions,
                                        bool guarantee_connectivity,
                                        ace_memory_requirements& mem)
 {
-  common::nvtx::range<common::nvtx::domain::cuvs> r("cagra_build::ace_validate_disk_mode_partitions");
+  common::nvtx::range<common::nvtx::domain::cuvs> r("build_ace::validate_disk_mode_partitions");
   // In disk mode, we don't need the full dataset or final graph in memory.
   // Host memory model for disk mode:
   //   - Partition labels (core + augmented): 2 * dataset_size * sizeof(IdxT)
@@ -978,6 +988,7 @@ void ace_validate_disk_mode_partitions(size_t& n_partitions,
   size_t disk_mode_host_required = mem.partition_labels_size + mem.id_mapping_size +
                                    mem.sub_dataset_size + mem.sub_graph_size +
                                    host_workspace_size_total + 2e9;
+  std::cout << "----- ACE: Disk: host_required: " << to_gib(disk_mode_host_required - 2e9) << " GiB" << std::endl;
 
   if (static_cast<size_t>(usable_cpu_memory_fraction * mem.available_host_memory) <
       disk_mode_host_required) {
@@ -998,6 +1009,10 @@ void ace_validate_disk_mode_partitions(size_t& n_partitions,
     double available_for_scaling =
       usable_cpu_memory_fraction * mem.available_host_memory - disk_mode_host_static;
 
+    std::cout << "----- ACE: Disk: host_static: " << to_gib(disk_mode_host_static - 2e9) << " GiB" << std::endl;
+    std::cout << "----- ACE: Disk: host_dynamic: " << to_gib(disk_mode_host_dynamic * n_partitions) << " GiB" << std::endl;
+    std::cout << "----- ACE: Disk: host_total: " << to_gib(disk_mode_host_static - 2e9 + disk_mode_host_dynamic * n_partitions) << " GiB" << std::endl;
+
     RAFT_EXPECTS(available_for_scaling > 0,
                  "ACE: Host memory insufficient even for constant overhead (labels + id_mapping + "
                  "static workspace). "
@@ -1016,6 +1031,8 @@ void ace_validate_disk_mode_partitions(size_t& n_partitions,
   // * optimize workspace (gpu_workspace_size_total)
   // + some extra workspace (IVF-PQ search, ...)
   size_t disk_mode_gpu_required = std::max(mem.sub_dataset_size, gpu_workspace_size_total) + 2e9;
+  std::cout << "----- ACE: Disk: gpu_required: " << to_gib(disk_mode_gpu_required - 2e9) << " GiB" << std::endl;
+  std::cout << "--------------------------------" << std::endl;
 
   if (static_cast<size_t>(usable_gpu_memory_fraction * mem.available_gpu_memory) <
       disk_mode_gpu_required) {
@@ -1340,6 +1357,7 @@ index<T, IdxT> build_ace(raft::resources const& res,
                      augmented_sub_dataset_size);
 
       cuvs::common::nvtx::push_range("build_ace::sub_dataset");
+      std::cout << "sub_dataset_size: " << sub_dataset_size << ", dataset_dim: " << dataset_dim << std::endl;
       auto sub_dataset = raft::make_host_matrix<T, int64_t>(sub_dataset_size, dataset_dim);
       cuvs::common::nvtx::pop_range();
 
@@ -2222,7 +2240,7 @@ index<T, IdxT> build(
       knn_build_params = cagra::graph_build_params::ivf_pq_params(dataset.extents(), params.metric);
     }
   }
-  cuvs::common::nvtx::push_range("no_alloc");
+  cuvs::common::nvtx::push_range("no_alloc cagra_build");
   RAFT_EXPECTS(
     params.metric != cuvs::distance::DistanceType::BitwiseHamming ||
       std::holds_alternative<cagra::graph_build_params::iterative_search_params>(
@@ -2251,9 +2269,6 @@ index<T, IdxT> build(
     common::nvtx::range<common::nvtx::domain::cuvs> r("cagra_build::iterative_build_graph");
     cagra_graph = iterative_build_graph<T, IdxT, Accessor>(res, params, dataset);
   } else {
-    std::cout << "cagra_build::knn_graph" << std::endl;
-    std::cout << "dataset.extent(0): " << dataset.extent(0) << std::endl;
-    std::cout << "intermediate_degree: " << intermediate_degree << std::endl;
     cuvs::common::nvtx::push_range("cagra_build::knn_graph");
     std::optional<raft::host_matrix<IdxT, int64_t>> knn_graph(
       raft::make_host_matrix<IdxT, int64_t>(dataset.extent(0), intermediate_degree));
@@ -2270,7 +2285,6 @@ index<T, IdxT> build(
           params.metric);
         ivf_pq_params.build_params.metric = params.metric;
       }
-      std::cout << "cagra_build::build_knn_graph by ivf_pq" << std::endl;
       cuvs::common::nvtx::push_range("cagra_build::build_knn_graph by ivf_pq");
       build_knn_graph(res, dataset, knn_graph->view(), ivf_pq_params);
       cuvs::common::nvtx::pop_range();
@@ -2335,7 +2349,7 @@ index<T, IdxT> build(
     return idx;
   }
   if (params.attach_dataset_on_build) {
-    common::nvtx::range<common::nvtx::domain::cuvs> r("!!! cagra_build::attach_dataset_on_build");
+    common::nvtx::range<common::nvtx::domain::cuvs> r("cagra_build::attach_dataset_on_build");
     try {
       return index<T, IdxT>(
         res, params.metric, dataset, raft::make_const_mdspan(cagra_graph.view()));
