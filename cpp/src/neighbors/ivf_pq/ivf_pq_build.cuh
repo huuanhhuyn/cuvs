@@ -153,7 +153,7 @@ void flat_compute_residuals(
   auto stream  = raft::resource::get_cuda_stream(handle);
   auto dim     = rotation_matrix.extent(1);
   auto rot_dim = rotation_matrix.extent(0);
-  cuvs::common::nvtx::push_range("ivf_pq::build::extend::flat_compute_residuals_tmp");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::flat_compute_residuals_tmp");
   rmm::device_uvector<float> tmp(n_rows * dim, stream, device_memory);
   cuvs::common::nvtx::pop_range();
   auto tmp_view = raft::make_device_vector_view<float, size_t>(tmp.data(), tmp.size());
@@ -805,7 +805,7 @@ void process_and_fill_codes(raft::resources const& handle,
                             IdxT n_rows,
                             rmm::device_async_resource_ref mr)
 {
-  cuvs::common::nvtx::push_range("ivf_pq::build::extend::new_vectors_residual");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::new_vectors_residual");
   auto new_vectors_residual =
     raft::make_device_mdarray<float>(handle, mr, raft::make_extents<IdxT>(n_rows, index.rot_dim()));
   cuvs::common::nvtx::pop_range();
@@ -1003,7 +1003,7 @@ void extend(raft::resources const& handle,
   // If this fails, the index would be too big to fit in the device anyway.
   std::optional<list_data_interleaved<IdxT, size_t>> placeholder_list_interleaved;
   std::optional<raft::device_matrix<uint8_t, IdxT, raft::row_major>> placeholder_list_flat;
-  cuvs::common::nvtx::push_range("ivf_pq::build::extend::placeholder_list");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::placeholder_list");
   if (index->codes_layout() == list_layout::FLAT) {
     auto spec = list_spec_flat<uint32_t, IdxT>{
       index->pq_bits(), index->pq_dim(), index->conservative_memory_allocation()};
@@ -1034,7 +1034,7 @@ void extend(raft::resources const& handle,
     labels_mr = large_memory;
   }
   // Allocate a buffer for the new labels (classifying the new data)
-  cuvs::common::nvtx::push_range("ivf_pq::build::extend::new_data_labels");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::new_data_labels");
   rmm::device_uvector<uint32_t> new_data_labels(n_rows, stream, labels_mr);
   cuvs::common::nvtx::pop_range();
   free_mem = raft::resource::get_workspace_free_bytes(handle);
@@ -1087,7 +1087,7 @@ void extend(raft::resources const& handle,
     }
   }
   // Predict the cluster labels for the new data, in batches if necessary
-  cuvs::common::nvtx::push_range("ivf_pq::build::extend::vec_batches_buf");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::vec_batches_buf");
   auto vec_batches = utils::make_batch_load_iterator<T>(handle,
                                                         new_vectors,
                                                         n_rows,
@@ -1105,7 +1105,7 @@ void extend(raft::resources const& handle,
   {
     // The cluster centers in the index are stored padded, which is not acceptable by
     // the kmeans_balanced::predict. Thus, we need the restructuring raft::copy.
-    cuvs::common::nvtx::push_range("ivf_pq::build::extend::cluster_centers");
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::cluster_centers");
     rmm::device_uvector<float> cluster_centers(
       size_t(n_clusters) * size_t(index->dim()), stream, device_memory);
     cuvs::common::nvtx::pop_range();
@@ -1137,7 +1137,7 @@ void extend(raft::resources const& handle,
 
   auto list_sizes = index->list_sizes().data_handle();
   // store the current cluster sizes, because we'll need them later
-  cuvs::common::nvtx::push_range("ivf_pq::build::extend::orig_list_sizes");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::orig_list_sizes");
   rmm::device_uvector<uint32_t> orig_list_sizes(n_clusters, stream, device_memory);
   cuvs::common::nvtx::pop_range();
   raft::copy(handle,
@@ -1169,7 +1169,7 @@ void extend(raft::resources const& handle,
                raft::make_host_vector_view(old_cluster_sizes.data(), n_clusters),
                raft::make_device_vector_view<const uint32_t>(orig_list_sizes.data(), n_clusters));
     raft::resource::sync_stream(handle);
-    cuvs::common::nvtx::push_range("ivf_pq::build::extend::resize_lists");
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::extend::pq_codes");
     if (index->codes_layout() == list_layout::FLAT) {
       auto spec = list_spec_flat<uint32_t, IdxT>{
         index->pq_bits(), index->pq_dim(), index->conservative_memory_allocation()};
@@ -1244,9 +1244,9 @@ auto build(raft::resources const& handle,
 {
   IdxT n_rows = dataset.extent(0);
   IdxT dim    = dataset.extent(1);
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build", size_t(n_rows), dim);
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::build");
 
-  cuvs::common::nvtx::push_range("ivf_pq::build::owning_impl");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::owning_impl");
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, half> || std::is_same_v<T, uint8_t> ||
                   std::is_same_v<T, int8_t>,
                 "Unsupported data type");
@@ -1294,7 +1294,7 @@ auto build(raft::resources const& handle,
       big_memory_resource = device_memory;
     }
 
-    cuvs::common::nvtx::push_range("ivf_pq::build::trainset");
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::trainset");
     // Besides just sampling, we transform the input dataset into floats to make it easier
     // to use gemm operations from cublas.
     auto trainset = raft::make_device_mdarray<float>(
@@ -1312,21 +1312,21 @@ auto build(raft::resources const& handle,
 
     // TODO: a proper sampling
     if constexpr (std::is_same_v<T, float>) {
-      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build::sample_rows_float");
+      raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::build::sample_rows_float");
       raft::matrix::sample_rows<T, int64_t>(handle, random_state, dataset, trainset.view());
     } else {
 
       // TODO(tfeher): Enable codebook generation with any type T, and then remove trainset tmp.
-      cuvs::common::nvtx::push_range("ivf_pq::build::trainset_tmp");
+      cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::trainset_tmp");
       auto trainset_tmp = raft::make_device_mdarray<T>(
         handle, big_memory_resource, raft::make_extents<int64_t>(n_rows_train, dim));
       cuvs::common::nvtx::pop_range();
 
-      cuvs::common::nvtx::push_range("ivf_pq::build::sample_rows_other_types");
+      cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::sample_rows_other_types");
       raft::matrix::sample_rows<T, int64_t>(handle, random_state, dataset, trainset_tmp.view());
       cuvs::common::nvtx::pop_range();
 
-      cuvs::common::nvtx::push_range("ivf_pq::build::map_to_float");
+      cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::map_to_float");
       raft::linalg::map(handle,
                         raft::make_device_vector_view<float, int64_t>(trainset.data_handle(),
                                                                       (int64_t)trainset.size()),
@@ -1338,13 +1338,13 @@ auto build(raft::resources const& handle,
 
     // NB: here cluster_centers is used as if it is [n_clusters, data_dim] not [n_clusters,
     // dim_ext]!
-    cuvs::common::nvtx::push_range("ivf_pq::build::cluster_centers_buf");
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::cluster_centers_buf");
     rmm::device_uvector<float> cluster_centers_buf(
       impl->n_lists() * impl->dim(), stream, device_memory);
     cuvs::common::nvtx::pop_range();
     auto cluster_centers = cluster_centers_buf.data();
 
-    cuvs::common::nvtx::push_range("ivf_pq::build::k_means_clustering");
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::kmeans_clustering");
     // Train balanced hierarchical kmeans clustering
     auto trainset_const_view = raft::make_const_mdspan(trainset.view());
     auto centers_view        = raft::make_device_matrix_view<float, internal_extents_t>(
@@ -1361,9 +1361,7 @@ auto build(raft::resources const& handle,
     cuvs::common::nvtx::pop_range();
 
     // Trainset labels are needed for training PQ codebooks
-    cuvs::common::nvtx::push_range("ivf_pq::build::labels");
     rmm::device_uvector<uint32_t> labels(n_rows_train, stream, big_memory_resource);
-    cuvs::common::nvtx::pop_range();
     auto centers_const_view = raft::make_device_matrix_view<const float, internal_extents_t>(
       cluster_centers, impl->n_lists(), impl->dim());
     if (impl->metric() == distance::DistanceType::CosineExpanded) {
@@ -1371,18 +1369,22 @@ auto build(raft::resources const& handle,
     }
     auto labels_view =
       raft::make_device_vector_view<uint32_t, internal_extents_t>(labels.data(), n_rows_train);
-    cuvs::common::nvtx::push_range("ivf_pq::build::kmeans_predict");
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::kmeans_predict");
     cuvs::cluster::kmeans::predict(
       handle, kmeans_params, trainset_const_view, centers_const_view, labels_view);
     cuvs::common::nvtx::pop_range();
 
     // Make rotation matrix
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::rotation_matrix");
     helpers::make_rotation_matrix(handle, impl->rotation_matrix(), params.force_random_rotation);
+    cuvs::common::nvtx::pop_range();
 
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::centers");
     set_centers(handle, impl.get(), cluster_centers);
+    cuvs::common::nvtx::pop_range();
 
     // Train PQ codebooks
-    cuvs::common::nvtx::push_range("ivf_pq::build::train_pq");
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::build::train_pq");
     switch (impl->codebook_kind()) {
       case codebook_gen::PER_SUBSPACE:
         train_per_subset(handle,
@@ -1410,7 +1412,7 @@ auto build(raft::resources const& handle,
 
   // add the data if necessary
   if (params.add_data_on_build) {
-    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build::extend");
+    raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::build::extend");
     detail::extend<T, IdxT>(handle, &idx, dataset.data_handle(), nullptr, n_rows);
   }
   return idx;

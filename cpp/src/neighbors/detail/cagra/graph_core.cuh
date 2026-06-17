@@ -1666,7 +1666,7 @@ void prune_graph_gpu(
                    /*host_writeback=*/true);
   cuvs::common::nvtx::pop_range();
 
-  cuvs::common::nvtx::push_range("no_alloc optimize::prune::prefetch_next_batch");
+  cuvs::common::nvtx::push_range("optimize::prune::no_alloc::prefetch_next_batch");
   d_output_graph.prefetch_next_batch();
 
   auto d_invalid_neighbor_list = raft::make_device_scalar<uint32_t>(res, 0u);

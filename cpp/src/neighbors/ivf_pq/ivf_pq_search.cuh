@@ -71,12 +71,7 @@ void select_clusters(raft::resources const& handle,
                      const float* cluster_centers,  // [n_lists, dim_ext]
                      rmm::device_async_resource_ref mr)
 {
-  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    // "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
-    // n_probes,
-    // n_queries,
-    // n_lists,
-    // dim);
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::search::select_clusters<float>");
   auto stream = raft::resource::get_cuda_stream(handle);
   /* NOTE[qc_distances]
 
@@ -139,7 +134,9 @@ void select_clusters(raft::resources const& handle,
     } break;
     default: RAFT_FAIL("Unsupported distance type %d.", int(metric));
   }
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::select_clusters::qc_distances");
   rmm::device_uvector<float> qc_distances(size_t(n_queries) * size_t(n_lists), stream, mr);
+  cuvs::common::nvtx::pop_range();
   raft::linalg::gemm(handle,
                      true,
                      false,
@@ -181,12 +178,9 @@ void select_clusters(raft::resources const& handle,
                      const int8_t* cluster_centers,  // [n_lists, dim_ext]
                      rmm::device_async_resource_ref mr)
 {
-  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    // "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
-    // n_probes,
-    // n_queries,
-    // n_lists,
-    // dim);
+  
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::search::select_clusters<int8_t>");
+
   auto stream = raft::resource::get_cuda_stream(handle);
   int8_t norm_factor;
   switch (metric) {
@@ -225,7 +219,9 @@ void select_clusters(raft::resources const& handle,
     } break;
     default: RAFT_FAIL("Unsupported distance type %d.", int(metric));
   }
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::select_clusters::qc_distances");
   rmm::device_uvector<dist_type> qc_distances(size_t(n_queries) * size_t(n_lists), stream, mr);
+  cuvs::common::nvtx::pop_range();
   raft::linalg::gemm(handle,
                      true,
                      false,
@@ -269,12 +265,7 @@ void select_clusters(raft::resources const& handle,
                      const half* cluster_centers,  // [n_lists, dim_ext]
                      rmm::device_async_resource_ref mr)
 {
-  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    // "ivf_pq::search::select_clusters(n_probes = %u, n_queries = %u, n_lists = %u, dim = %u)",
-    // n_probes,
-    // n_queries,
-    // n_lists,
-    // dim);
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::search::select_clusters<half>");
   auto stream = raft::resource::get_cuda_stream(handle);
   half norm_factor;
   switch (metric) {
@@ -310,7 +301,9 @@ void select_clusters(raft::resources const& handle,
     } break;
     default: RAFT_FAIL("Unsupported distance type %d.", int(metric));
   }
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::select_clusters::qc_distances");
   rmm::device_uvector<dist_type> qc_distances(size_t(n_queries) * size_t(n_lists), stream, mr);
+  cuvs::common::nvtx::pop_range();
   raft::linalg::gemm(handle,
                      true,
                      false,
@@ -433,12 +426,7 @@ void ivfpq_search_worker(raft::resources const& handle,
                          double preferred_shmem_carveout,
                          IvfSampleFilterT sample_filter)
 {
-  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    // "ivf_pq::search-worker(n_queries = %u, n_probes = %u, k = %u, dim = %zu)",
-    // n_queries,
-    // n_probes,
-    // topK,
-    // index.dim());
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::search::worker");
   auto stream = raft::resource::get_cuda_stream(handle);
   auto mr     = raft::resource::get_workspace_resource_ref(handle);
 
@@ -458,11 +446,15 @@ void ivfpq_search_worker(raft::resources const& handle,
   rmm::device_uvector<uint32_t> num_samples(n_queries, stream, mr);
   rmm::device_uvector<uint32_t> chunk_index(n_queries_probes, stream, mr);
   // [maxBatchSize, max_samples] or  [maxBatchSize, n_probes, topk]
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::worker::distances_buf");
   rmm::device_uvector<ScoreT> distances_buf(n_queries_topk_len, stream, mr);
+  cuvs::common::nvtx::pop_range();
   rmm::device_uvector<uint32_t> neighbors_buf(0, stream, mr);
   uint32_t* neighbors_ptr = nullptr;
   if (manage_local_topk) {
+    cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::worker::neighbors_buf");
     neighbors_buf.resize(n_queries_topk_len, stream);
+    cuvs::common::nvtx::pop_range();
     neighbors_ptr = neighbors_buf.data();
   }
   rmm::device_uvector<uint32_t> neighbors_uint32_buf(0, stream, mr);
@@ -596,7 +588,9 @@ void ivfpq_search_worker(raft::resources const& handle,
     original_nbits = sample_filter.view().get_original_nbits();
   }
 
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::worker::device_lut");
   rmm::device_uvector<LutT> device_lut(search_instance.device_lut_size, stream, mr);
+  cuvs::common::nvtx::pop_range();
   std::optional<raft::device_vector<float>> query_kths_buf{std::nullopt};
   float* query_kths = nullptr;
   if (manage_local_topk) {
@@ -891,12 +885,7 @@ inline void search(raft::resources const& handle,
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, half> || std::is_same_v<T, uint8_t> ||
                   std::is_same_v<T, int8_t>,
                 "Unsupported element type.");
-  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    // "ivf_pq::search(n_queries = %u, n_probes = %u, k = %u, dim = %zu)",
-    // n_queries,
-    // params.n_probes,
-    // k,
-    // index.dim());
+  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("ivf_pq::build_knn::search");
 
   RAFT_EXPECTS(
     params.internal_distance_dtype == CUDA_R_16F || params.internal_distance_dtype == CUDA_R_32F,
@@ -952,6 +941,7 @@ inline void search(raft::resources const& handle,
 
   using some_query_t = std::
     variant<rmm::device_uvector<float>, rmm::device_uvector<half>, rmm::device_uvector<int8_t>>;
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::gemm_queries");
   some_query_t gemm_queries(
     params.coarse_search_dtype == CUDA_R_32F
       ? std::move(some_query_t{
@@ -964,15 +954,16 @@ inline void search(raft::resources const& handle,
           std::in_place_type_t<rmm::device_uvector<int8_t>>{}, max_bs_outer * dim_ext, stream, mr})
       : throw raft::logic_error("Unsupported coarse_search_dtype (only CUDA_R_32F, "
                                 "CUDA_R_16F, and CUDA_R_8I are supported)"));
+  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::search::rot_queries");
   rmm::device_uvector<float> rot_queries(max_bs_outer * index.rot_dim(), stream, mr);
+  cuvs::common::nvtx::pop_range();
   rmm::device_uvector<uint32_t> clusters_to_probe(max_bs_outer * n_probes, stream, mr);
 
   auto search_instance = ivfpq_search<IdxT, IvfSampleFilterT>::fun(params, index.metric());
 
   for (uint32_t offset_q = 0; offset_q < n_queries; offset_q += max_bs_outer) {
     uint32_t queries_batch = min(max_bs_outer, n_queries - offset_q);
-    // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> batch_scope(
-      // "ivf_pq::search-batch(queries: %u - %u)", offset_q, offset_q + queries_batch);
 
     std::visit(
       [&](auto&& gemm_qs) {

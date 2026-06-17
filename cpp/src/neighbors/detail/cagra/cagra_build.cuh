@@ -1653,6 +1653,9 @@ void build_knn_graph(
   raft::host_matrix_view<IdxT, int64_t, raft::row_major> knn_graph,
   cuvs::neighbors::cagra::graph_build_params::ivf_pq_params pq)
 {
+  common::nvtx::range<common::nvtx::domain::cuvs> r("ivf_pq::build_knn");
+
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::minor_alloc::1");
   RAFT_EXPECTS(pq.build_params.metric == cuvs::distance::DistanceType::L2Expanded ||
                  pq.build_params.metric == cuvs::distance::DistanceType::InnerProduct ||
                  pq.build_params.metric == cuvs::distance::DistanceType::CosineExpanded,
@@ -1676,17 +1679,16 @@ void build_knn_graph(
             static_cast<uint32_t>(pq.build_params.codebook_kind));
     return std::string(model_name);
   }();
+  cuvs::common::nvtx::pop_range(); // minor_alloc::1
 
   RAFT_LOG_DEBUG("# Building IVF-PQ index %s", model_name.c_str());
-  cuvs::common::nvtx::push_range("build_knn::ivf_pq_build");
   auto index = cuvs::neighbors::ivf_pq::build(res, pq.build_params, dataset);
-  cuvs::common::nvtx::pop_range();
 
   //
   // search top (k + 1) neighbors
   //
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::minor_alloc::2");
 
-  cuvs::common::nvtx::push_range("no_alloc heuristic");
   const auto top_k       = node_degree + 1;
   uint32_t gpu_top_k     = node_degree * pq.refinement_rate;
   gpu_top_k              = std::min<IdxT>(std::max(gpu_top_k, top_k), dataset.extent(0));
@@ -1746,9 +1748,9 @@ void build_knn_graph(
     gpu_top_k,
     max_queries,
     pq.search_params.n_probes);
-  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::pop_range(); // minor_alloc::2
 
-  cuvs::common::nvtx::push_range("cagra_build::ivf_pq::buffers");
+  cuvs::common::nvtx::push_range("ivf_pq::build_knn::outer_search");
   auto distances = raft::make_device_mdarray<float>(
     res, workspace_mr, raft::make_extents<int64_t>(max_queries, gpu_top_k));
   auto neighbors = raft::make_device_mdarray<int64_t>(
@@ -1757,11 +1759,11 @@ void build_knn_graph(
     res, workspace_mr, raft::make_extents<int64_t>(max_queries, top_k));
   auto refined_neighbors = raft::make_device_mdarray<int64_t>(
     res, workspace_mr, raft::make_extents<int64_t>(max_queries, top_k));
+
   auto neighbors_host = raft::make_host_matrix<int64_t, int64_t>(max_queries, gpu_top_k);
   auto queries_host   = raft::make_host_matrix<DataT, int64_t>(max_queries, dataset.extent(1));
   auto refined_neighbors_host = raft::make_host_matrix<int64_t, int64_t>(max_queries, top_k);
   auto refined_distances_host = raft::make_host_matrix<float, int64_t>(max_queries, top_k);
-  cuvs::common::nvtx::pop_range();
 
   // TODO(tfeher): batched search with multiple GPUs
   std::size_t num_self_included = 0;
@@ -1769,7 +1771,6 @@ void build_knn_graph(
   const auto start_clock        = std::chrono::system_clock::now();
   auto last_tick                = start_clock;
 
-  cuvs::common::nvtx::push_range("cagra_build::ivf_pq::vec_batches");
   auto vec_batches = cuvs::spatial::knn::detail::utils::make_batch_load_iterator<DataT>(
     res,
     dataset.data_handle(),
@@ -1778,7 +1779,7 @@ void build_knn_graph(
     static_cast<size_t>(max_queries),
     raft::resource::get_cuda_stream(res),
     workspace_mr);
-  cuvs::common::nvtx::pop_range();
+  cuvs::common::nvtx::pop_range(); // ivf_pq::build_knn::outer_search
   
   size_t next_report_offset = 0;
   size_t d_report_offset    = dataset.extent(0) / 100;  // Report progress in 1% steps.
@@ -1788,7 +1789,7 @@ void build_knn_graph(
   size_t previous_batch_offset = 0;
 
   for (const auto& batch : vec_batches) {
-    common::nvtx::range<common::nvtx::domain::cuvs> r("cagra_build::ivf_pq::batch");
+    common::nvtx::range<common::nvtx::domain::cuvs> r("ivf_pq::build_knn::search_batch");
     auto queries_view = raft::make_device_matrix_view<const DataT, int64_t>(
       batch.data(), batch.size(), batch.row_width());
     auto neighbors_view = raft::make_device_matrix_view<int64_t, int64_t>(
@@ -2349,7 +2350,7 @@ index<T, IdxT> build(
     return idx;
   }
   if (params.attach_dataset_on_build) {
-    common::nvtx::range<common::nvtx::domain::cuvs> r("cagra_build::attach_dataset_on_build");
+    common::nvtx::range<common::nvtx::domain::cuvs> r("cagra_build::attach_dataset");
     try {
       return index<T, IdxT>(
         res, params.metric, dataset, raft::make_const_mdspan(cagra_graph.view()));
@@ -2367,7 +2368,7 @@ index<T, IdxT> build(
     }
   }
 
-  cuvs::common::nvtx::push_range("cagra_build::update_graph");
+  cuvs::common::nvtx::push_range("cagra_build::no_alloc::update_graph");
   index<T, IdxT> idx(res, params.metric);
   idx.update_graph(res, raft::make_const_mdspan(cagra_graph.view()));
   cuvs::common::nvtx::pop_range();

@@ -1494,8 +1494,8 @@ std::unique_ptr<index<T>> build(raft::resources const& res,
     auto [required_host, required_dev] = cuvs::neighbors::cagra::helpers::cagra_build_mem_usage(
       res, dataset.extents(), sizeof(T), cagra_params);
     cuvs::common::nvtx::pop_range();
-    cuvs::neighbors::cagra::helpers::em_cagra_build(
-      dataset.extent(0), dataset.extent(1), sizeof(T), cagra_params);
+    cuvs::neighbors::cagra::helpers::memuse_cagra_build(
+      dataset.extent(0), dataset.extent(1), sizeof(T), cagra_params, res);
 
     cuvs::common::nvtx::push_range("no_alloc hnsw::build::get_available_memory");
     auto [available_host, available_dev] = get_available_memory();
