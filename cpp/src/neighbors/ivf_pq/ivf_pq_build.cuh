@@ -1358,7 +1358,7 @@ auto build(raft::resources const& handle,
         handle, trainset_const_view, trainset.view());
     }
     cuvs::cluster::kmeans::fit(handle, kmeans_params, trainset_const_view, centers_view);
-    cuvs::common::nvtx::pop_range();
+    cuvs::common::nvtx::pop_range();  // kmeans_clustering
 
     // Trainset labels are needed for training PQ codebooks
     rmm::device_uvector<uint32_t> labels(n_rows_train, stream, big_memory_resource);

@@ -84,13 +84,59 @@ std::tuple<size_t, size_t, size_t, size_t> optimize_workspace_size(size_t n_rows
   return std::make_tuple(total_host, total_dev, total_host_fixed, total_dev_fixed);
 }
 
+inline size_t ivf_pq_extend_mem_usage(raft::matrix_extent<int64_t> dataset,
+                                      cuvs::neighbors::graph_build_params::ivf_pq_params params,
+                                      size_t dtype_size)
+{
+  constexpr size_t kReasonableMaxBatchSize = 65536;
+  constexpr size_t kSpecAlignMax           = 1024;
+
+  size_t n_rows     = dataset.extent(0);
+  size_t dim        = dataset.extent(1);
+  size_t pq_dim     = params.build_params.pq_dim;
+  size_t pq_bits    = params.build_params.pq_bits;
+  size_t rot_dim    = raft::round_up_safe<size_t>(dim, pq_dim);
+  size_t n_clusters = params.build_params.n_lists;
+
+  size_t max_batch_size = std::min<size_t>(n_rows, kReasonableMaxBatchSize);
+  size_t workspace_size = max_batch_size * dim * dtype_size           // vec_batches
+                          + max_batch_size * rot_dim * sizeof(float)  // new_vectors_residual
+                          + max_batch_size * dim * sizeof(float);     // flat_compute_residuals_tmp
+
+  // each row contains pq codes and index
+  size_t code_bytes_per_vec = pq_dim * pq_bits / 8;
+  size_t bytes_per_row      = code_bytes_per_vec + sizeof(uint32_t);
+
+  // estimate the "worst-case" for the number of placeholder rows and resize rows
+  // The worst-case (i.e. max) happens for INTERLEAVED (as oppposed to FLAT) and when each row
+  // wastes n_cluster * alignment_size
+  size_t n_rows_placeholder  = n_rows + ivf_pq::kIndexGroupSize * n_clusters;
+  size_t placeholder_dev     = n_rows_placeholder * bytes_per_row;
+  size_t n_rows_resize_lists = n_rows + kSpecAlignMax * n_clusters;
+  size_t resize_lists_dev    = n_rows_resize_lists * bytes_per_row;
+
+  // Placeholder freed before resize_list
+  size_t device_size = std::max(placeholder_dev, resize_lists_dev);
+
+  std::cout << "+++ placeholder_dev " << to_mib(placeholder_dev) << " MiB" << std::endl;
+  std::cout << "+++ resize_lists_dev " << to_mib(resize_lists_dev) << " MiB" << std::endl;
+  std::cout << "+++ device_size " << to_mib(device_size) << " MiB" << std::endl;
+  std::cout << "+++ workspace_size " << to_mib(workspace_size) << " MiB" << std::endl;
+  std::cout << "+++ total extend size " << to_mib(device_size + workspace_size) << " MiB"
+            << std::endl;
+
+  return device_size + workspace_size;
+}
+
 // All sizes are in bytes
 inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
   raft::resources const& res,
   raft::matrix_extent<int64_t> dataset,
   cuvs::neighbors::graph_build_params::ivf_pq_params params,
   size_t graph_degree,
-  size_t intermediate_graph_degree)
+  size_t intermediate_graph_degree,
+  bool guarantee_connectivity,
+  size_t dtype_size)
 {
   size_t n_rows = dataset.extent(0);
 
@@ -102,7 +148,16 @@ inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
         host_workspace_size_fixed,
         gpu_workspace_size_fixed] =
     cuvs::neighbors::cagra::helpers::optimize_workspace_size(
-      n_rows, graph_degree, intermediate_graph_degree, sizeof(uint32_t));
+      n_rows, graph_degree, intermediate_graph_degree, sizeof(uint32_t), guarantee_connectivity);
+
+  size_t debug_host_size = 0;
+  if (raft::default_logger().should_log(rapids_logger::level_enum::debug)) {
+    debug_host_size = n_rows * graph_degree * sizeof(uint32_t)  // host_copy_output_graph
+                      + n_rows * sizeof(uint32_t)               // in_edge_count
+                      + graph_degree * sizeof(uint32_t);        // hist
+  }
+  constexpr size_t kSampleRowsPinnedSize = 256ULL * 1024 * 1024;
+  std::cout << "+++ debug_host_size " << to_mib(debug_host_size) << " MiB" << std::endl;
 
   // The kmeans trainset is a large temporary float buffer allocated during IVF-PQ training.
   // It is freed before the extend phase, so peak GPU = max(training_peak, extend_peak).
@@ -113,9 +168,25 @@ inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
   size_t kmeans_n_rows  = n_rows / kmeans_trainset_ratio;
   size_t kmeans_gpu_mem = kmeans_n_rows * dataset.extent(1) * sizeof(float);
 
+  size_t ivf_pq_extend_size = ivf_pq_extend_mem_usage(dataset, params, dtype_size);
+
+  // Account for remaining small allocations
+  constexpr size_t kResidualHost = 2e8;
+  constexpr size_t kResidualGpu  = 2e8;
+
+  std::cout << "kmeans_gpu_mem " << to_gib(kmeans_gpu_mem) << " GiB, "
+            << "dataset_gpu_mem " << to_gib(dataset_gpu_mem) << " GiB, "
+            << "gpu_workspace_size " << to_gib(gpu_workspace_size) << " GiB" << std::endl;
+
   size_t total_host =
-    graph_host_mem + host_workspace_size + 2e9;  // added 2 GB extra workspace (IVF-PQ search)
-  size_t total_dev = std::max({kmeans_gpu_mem, dataset_gpu_mem, gpu_workspace_size}) + 1e9;
+    graph_host_mem + host_workspace_size + debug_host_size + kSampleRowsPinnedSize + kResidualHost;
+  size_t total_dev =
+    std::max({kmeans_gpu_mem, dataset_gpu_mem, gpu_workspace_size, ivf_pq_extend_size}) +
+    kResidualGpu;
+
+  std::cout << "** ivf_pq_build_mem_usage: "
+            << " host: " << to_gib(total_host - kResidualHost) << " GiB, "
+            << " device: " << to_gib(total_dev - kResidualGpu) << " GiB" << std::endl;
   return std::make_pair(total_host, total_dev);
 }
 
@@ -133,8 +204,13 @@ std::pair<size_t, size_t> cagra_build_mem_usage(raft::resources const& res,
     RAFT_LOG_INFO("Considering CAGRA in memory build with IVF-PQ");
     graph_build_params::ivf_pq_params pq_params =
       std::get<graph_build_params::ivf_pq_params>(cparams.graph_build_params);
-    std::tie(total_host, total_dev) = ivf_pq_build_mem_usage(
-      res, dataset, pq_params, cparams.graph_degree, cparams.intermediate_graph_degree);
+    std::tie(total_host, total_dev) = ivf_pq_build_mem_usage(res,
+                                                             dataset,
+                                                             pq_params,
+                                                             cparams.graph_degree,
+                                                             cparams.intermediate_graph_degree,
+                                                             cparams.guarantee_connectivity,
+                                                             dtype_size);
   } else if (std::holds_alternative<graph_build_params::nn_descent_params>(
                cparams.graph_build_params)) {
     RAFT_LOG_INFO("Considering CAGRA in memory build with NN-descent");
@@ -166,6 +242,8 @@ MemUsage memuse_optimize(size_t n_rows,
                          bool guarantee_connectivity)
 {
   size_t batch_size = std::min(static_cast<size_t>(256 * 1024), n_rows);
+
+  std::cout << "memuse_optimize: guarantee_connectivity = " << guarantee_connectivity << std::endl;
 
   // Peak host: outer + inner mst arrays all live simultaneously (if mst)
   size_t total_host = 0;
@@ -232,6 +310,26 @@ MemUsage memuse_optimize(size_t n_rows,
     std::cout << "optimize::merge::d_mst_graph_num_edges "
               << to_mib(2 * batch_size * sizeof(uint32_t)) << " MiB" << std::endl;
   }
+  if (raft::default_logger().should_log(rapids_logger::level_enum::debug)) {
+    // graph_core.cuh::log_incoming_edges_histogram allocates host_copy_output_graph
+    // (n_rows * graph_degree * index_size) even for host-accessible graphs, plus in_edge_count
+    // (n_rows * uint32_t) and hist (graph_degree * uint32_t).  check_duplicates_and_out_of_range
+    // makes the same host_copy but runs after, so the peak comes from log_incoming_edges_histogram.
+    // These run after all inner MST allocations are freed; only outer mst_graph /
+    // mst_graph_num_edges remain live (if guarantee_connectivity).
+    size_t persistent_at_debug =
+      guarantee_connectivity ? n_rows * graph_degree * index_size + n_rows * sizeof(uint32_t) : 0;
+    size_t debug_peak = persistent_at_debug +
+                        n_rows * graph_degree * index_size  // host_copy_output_graph
+                        + n_rows * sizeof(uint32_t)         // in_edge_count
+                        + graph_degree * sizeof(uint32_t);  // hist
+    total_host = std::max(total_host, debug_peak);
+    std::cout << "optimize::debug::host_copy_output_graph "
+              << to_mib(n_rows * graph_degree * index_size) << " MiB" << std::endl;
+    std::cout << "optimize::debug::in_edge_count " << to_mib(n_rows * sizeof(uint32_t)) << " MiB"
+              << std::endl;
+  }
+
   std::cout << "memuse_optimize: host: " << to_gib(total_host) << " GiB, "
             << "pinned: " << to_gib(0) << " GiB, "
             << "workspace: " << to_gib(total_ws) << " GiB, "
@@ -266,7 +364,7 @@ MemUsage memuse_ivf_pq_extend(size_t n_rows,
                     + batch_size * dim * dtype_size;  // vec_batches_buf (1 buffer, no prefetch)
 
   // flat_compute_residuals_tmp uses batches_mr (workspace), not the default device allocator.
-  size_t fill_ws = batch_size * dim * dtype_size         // vec_batches_buf
+  size_t fill_ws = batch_size * dim * dtype_size           // vec_batches_buf
                    + batch_size * rot_dim * sizeof(float)  // new_vectors_residual
                    + batch_size * dim * sizeof(float);     // flat_compute_residuals_tmp
 
@@ -291,14 +389,14 @@ MemUsage memuse_ivf_pq_extend(size_t n_rows,
   // resize_lists_dev is also the permanent net delta (it stays as index list data after extend).
   size_t total_dev = std::max(placeholder_dev, resize_lists_dev);
 
-  std::cout << "ivf_pq::build_knn::build::extend::placeholder_list " << to_mib(placeholder_dev) << " MiB"
-            << std::endl;
-  std::cout << "ivf_pq::build_knn::build::extend::vec_batches_buf " << to_mib(batch_size * dim * dtype_size)
+  std::cout << "ivf_pq::build_knn::build::extend::placeholder_list " << to_mib(placeholder_dev)
             << " MiB" << std::endl;
-  std::cout << "ivf_pq::build_knn::build::extend::new_data_labels " << to_mib(n_rows * sizeof(uint32_t))
-            << " MiB" << std::endl;
-  std::cout << "ivf_pq::build_knn::build::extend::cluster_centers " << to_mib(n_clusters * dim * sizeof(float))
-            << " MiB" << std::endl;
+  std::cout << "ivf_pq::build_knn::build::extend::vec_batches_buf "
+            << to_mib(batch_size * dim * dtype_size) << " MiB" << std::endl;
+  std::cout << "ivf_pq::build_knn::build::extend::new_data_labels "
+            << to_mib(n_rows * sizeof(uint32_t)) << " MiB" << std::endl;
+  std::cout << "ivf_pq::build_knn::build::extend::cluster_centers "
+            << to_mib(n_clusters * dim * sizeof(float)) << " MiB" << std::endl;
   std::cout << "ivf_pq::build_knn::build::extend::new_vectors_residual "
             << to_mib(batch_size * rot_dim * sizeof(float)) << " MiB" << std::endl;
   std::cout << "ivf_pq::build_knn::build::extend::flat_compute_residuals_tmp "
@@ -360,18 +458,19 @@ MemUsage memuse_ivf_pq_build(size_t n_rows,
   // trainset)
   size_t mc_size_max  = (2 * n_rows_train + n_mesoclusters - 1) / n_mesoclusters;
   size_t kmeans_large = mc_size_max * dim * sizeof(float);
-  // device: mesocluster_labels_buf on managed memory
-  size_t kmeans_fit_dev = n_rows_train * sizeof(uint32_t);
 
-  // labels range: n_rows_train * uint32_t on big_memory_resource (workspace or large_workspace).
-  size_t labels_large = n_rows_train * sizeof(uint32_t);
+  // labels range: n_rows_train * uint32_t on big_memory_resource (same as trainset).
+  size_t labels_size = n_rows_train * sizeof(uint32_t);
 
   // Upper bound: always-fused path (fusedL2NN, all rows in one batch).
-  // Fit delta: dataset_norm_buf (4) + inner labels (4) + minClusterAndDist (8) + mutex (4)
+  // IVF-PQ uses internal_extents_t = int64_t as IdxT, so KeyValuePair<int64_t, float> = 16 bytes
+  // (int64_t key + float value + 4 bytes struct padding to align to 8).
+  constexpr size_t kKVPairBytes = sizeof(int64_t) + sizeof(float) + sizeof(int32_t);  // = 16
+  // Fit delta: dataset_norm_buf (4) + inner labels (4) + minClusterAndDist (16) + mutex (4)
   size_t kmeans_fit_ws =
-    n_rows_train * (sizeof(float) + sizeof(uint32_t) + sizeof(uint64_t) + sizeof(int));
-  // Predict delta: cur_dataset_norm (4) + minClusterAndDist (8) + mutex (4)
-  size_t kmeans_predict_ws = n_rows_train * (sizeof(float) + sizeof(uint64_t) + sizeof(int));
+    n_rows_train * (sizeof(float) + sizeof(uint32_t) + kKVPairBytes + sizeof(int));
+  // Predict delta: cur_dataset_norm (4) + minClusterAndDist (16) + mutex (4)
+  size_t kmeans_predict_ws = n_rows_train * (sizeof(float) + kKVPairBytes + sizeof(int));
 
   // train_pq range: workspace delta during PQ codebook training.
   // cluster_centers_buf + labels still live; new buffers are for the codebook training.
@@ -398,44 +497,58 @@ MemUsage memuse_ivf_pq_build(size_t n_rows,
   auto ext = memuse_ivf_pq_extend(
     n_rows, dim, rot_dim, n_clusters, index_size, dtype_size, pq_dim, pq_bits_val);
 
-  // --- Peak computation (worst-case upper bounds) ---
-  // workspace upper bound: Case A (trainset + labels on workspace) — always larger than Case B.
-  size_t workspace_internal =
-    trainset_base + cluster_centers_ws +
-    std::max({kmeans_fit_ws, labels_large + kmeans_predict_ws, labels_large + train_pq_ws});
-  // large_workspace upper bound: Case B (trainset on large_workspace) — always larger than Case A.
-  size_t train_large = trainset_base + std::max(kmeans_large, labels_large);
+  // --- Determine big_memory_resource: mirrors ivf_pq_build.cuh kTolerableRatio = 4 check.
+  // trainset and labels both go to big_memory_resource; mc_trainset_buf always goes to
+  // large_workspace.
+  constexpr size_t kTolerableRatio = 4;
+  const bool trainset_on_ws =
+    (trainset_ws * kTolerableRatio < raft::resource::get_workspace_free_bytes(handle));
+
+  // --- Peak computation ---
+  size_t workspace_internal, train_large;
+  if (trainset_on_ws) {
+    // big_memory_resource = workspace: trainset and labels both on workspace.
+    workspace_internal =
+      trainset_base + cluster_centers_ws +
+      std::max({kmeans_fit_ws, labels_size + kmeans_predict_ws, labels_size + train_pq_ws});
+    train_large = kmeans_large;
+  } else {
+    // big_memory_resource = large_workspace: trainset and labels on large_workspace.
+    workspace_internal =
+      cluster_centers_ws + std::max({kmeans_fit_ws, kmeans_predict_ws, train_pq_ws});
+    train_large = trainset_base + std::max(kmeans_large, labels_size);
+  }
   size_t total_ws    = std::max(workspace_internal, ext.workspace);
   size_t total_large = std::max(train_large, ext.large_workspace);
 
   size_t total_host    = std::max(sample_rows_host, ext.host);
   size_t total_pinned  = sample_rows_pinned;
   size_t total_managed = std::max(train_pq_managed, ext.managed);
-  size_t total_dev     = std::max({sample_rows_dev, kmeans_fit_dev, ext.device});
+  size_t total_dev     = std::max({sample_rows_dev, ext.device});
 
   // --- Print per-range estimates in NVTX range order ---
-  std::cout << "ivf_pq::build_knn::build::trainset workspace_or_large_workspace "
-            << to_mib(trainset_ws) << " MiB" << std::endl;
+  const char* big_mr_name = trainset_on_ws ? "workspace" : "large_workspace";
+  std::cout << "ivf_pq::build_knn::build::trainset " << big_mr_name << " " << to_mib(trainset_ws)
+            << " MiB" << std::endl;
   if (dtype_size != sizeof(float)) {
-    std::cout << "ivf_pq::build_knn::build::trainset_tmp workspace_or_large_workspace "
+    std::cout << "ivf_pq::build_knn::build::trainset_tmp " << big_mr_name << " "
               << to_mib(trainset_tmp_ws) << " MiB" << std::endl;
-    std::cout << "ivf_pq::build_knn::build::sample_rows_other_types host " << to_mib(sample_rows_host)
-              << " MiB, pinned " << to_mib(sample_rows_pinned) << " MiB, device "
-              << to_mib(sample_rows_dev) << " MiB" << std::endl;
+    std::cout << "ivf_pq::build_knn::build::sample_rows_other_types host "
+              << to_mib(sample_rows_host) << " MiB, pinned " << to_mib(sample_rows_pinned)
+              << " MiB, device " << to_mib(sample_rows_dev) << " MiB" << std::endl;
   } else {
     std::cout << "ivf_pq::build_knn::build::sample_rows_float host " << to_mib(sample_rows_host)
               << " MiB, pinned " << to_mib(sample_rows_pinned) << " MiB, device "
               << to_mib(sample_rows_dev) << " MiB" << std::endl;
   }
-  std::cout << "ivf_pq::build_knn::build::cluster_centers_buf workspace " << to_mib(cluster_centers_ws)
-            << " MiB" << std::endl;
+  std::cout << "ivf_pq::build_knn::build::cluster_centers_buf workspace "
+            << to_mib(cluster_centers_ws) << " MiB" << std::endl;
   std::cout << "ivf_pq::build_knn::build::kmeans_clustering workspace " << to_mib(kmeans_fit_ws)
-            << " MiB, large_workspace " << to_mib(kmeans_large) << " MiB, device "
-            << to_mib(kmeans_fit_dev) << " MiB" << std::endl;
-  std::cout << "ivf_pq::build_knn::build::labels workspace_or_large_workspace "
-            << to_mib(labels_large) << " MiB" << std::endl;
-  std::cout << "ivf_pq::build_knn::build::kmeans_predict workspace " << to_mib(kmeans_predict_ws) << " MiB"
-            << std::endl;
+            << " MiB, large_workspace " << to_mib(kmeans_large) << " MiB" << std::endl;
+  std::cout << "ivf_pq::build_knn::build::labels " << big_mr_name << " " << to_mib(labels_size)
+            << " MiB" << std::endl;
+  std::cout << "ivf_pq::build_knn::build::kmeans_predict workspace " << to_mib(kmeans_predict_ws)
+            << " MiB" << std::endl;
   std::cout << "memuse_ivf_pq_build: "
             << "host: " << to_gib(total_host) << " GiB"
             << ", pinned: " << to_gib(total_pinned) << " GiB"
@@ -478,7 +591,7 @@ static MemUsage memuse_ivf_pq_search(size_t n_outer,  // coarse batch (outer loo
   size_t distances_buf = n_inner * n_probes * top_k * kF;
   // ivf_pq::build_knn::search::worker::neighbors_buf  (fused path; same topk_len, uint32_t)
   size_t neighbors_buf = n_inner * n_probes * top_k * kU4;
-  size_t worker   = distances_buf + neighbors_buf;
+  size_t worker        = distances_buf + neighbors_buf;
 
   size_t total_ws = gemm_queries + rot_queries + std::max(qc_distances, worker);
 
@@ -492,7 +605,7 @@ static MemUsage memuse_ivf_pq_search(size_t n_outer,  // coarse batch (outer loo
             << " MiB" << std::endl;
   std::cout << "ivf_pq::build_knn::search::worker::neighbors_buf " << to_mib(neighbors_buf)
             << " MiB" << std::endl;
-  std::cout << "memuse_ivf_pq_search: workspace: " << to_gib(total_ws) << " GiB"  << std::endl;
+  std::cout << "memuse_ivf_pq_search: workspace: " << to_gib(total_ws) << " GiB" << std::endl;
 
   return {.workspace = total_ws};
 }
@@ -570,8 +683,7 @@ MemUsage memuse_build_knn_graph_by_ivf_pq(size_t n_rows,
   std::cout << "ivf_pq::build_knn::outer_search " << to_mib(outer_search_ws) << " MiB workspace, "
             << to_mib(outer_search_host) << " MiB host" << std::endl;
   std::cout << "memuse_build_knn_graph_by_ivf_pq: host: " << to_gib(total_host)
-            << " GiB, pinned: " << to_gib(total_pinned)
-            << " GiB, workspace: " << to_gib(total_ws)
+            << " GiB, pinned: " << to_gib(total_pinned) << " GiB, workspace: " << to_gib(total_ws)
             << " GiB, large_workspace: " << to_gib(total_large)
             << " GiB, managed: " << to_gib(total_managed) << " GiB, device: " << to_gib(total_dev)
             << " GiB" << std::endl;
@@ -743,6 +855,111 @@ MemUsage memuse_cagra_build(size_t n_rows,
                             cagra_params.guarantee_connectivity,
                             cagra_params.attach_dataset_on_build,
                             handle);
+}
+
+// Estimate peak memory allocated during hnsw::from_cagra<GPU> for a dataset of
+// n_rows × dim elements of size dtype_size.
+//
+// GPU hierarchy path builds upper-level HNSW nodes by:
+//   1. Double-buffering device→host dataset copy via pinned bufs_storage.
+//   2. For each HNSW level >= 1, gathering those points into host_query_set (host)
+//      and calling all_neighbors_graph → nn_descent::build.
+//   3. nn_descent (GNND) copies the dataset to device in fp16 and allocates its
+//      own work buffers.
+//
+// The dominant cost is at level 1, which holds ~n_rows/M upper-level points.
+// All formulas are verified against openai-5M measurements (dtype=float32,
+// dim=1536, CAGRA graph_degree=48 → M=24):
+//   host  measured=1.26 GiB  estimated=1.23 GiB
+//   pinned measured=181.74 MiB estimated=178.8 MiB
+//   workspace measured=585.94 MiB estimated=586 MiB
+//   device measured=667.98 MiB  estimated=662 MiB
+MemUsage memuse_hnsw_from_cagra(
+  size_t n_rows, size_t dim, size_t graph_degree, size_t dtype_size, bool device_copy)
+{
+  // hnsw_m is the HNSW parameter computed from the CAGRA graph degree.
+  size_t hnsw_m = (graph_degree + 1) / 2;
+  if (hnsw_m == 0) hnsw_m = 1;
+
+  // Expected number of upper-level (level >= 1) points: P(level>=1) = 1/hnsw_m.
+  size_t n_upper = n_rows / hnsw_m;
+  if (n_upper == 0) {
+    std::cout << "memuse_hnsw_from_cagra: no upper-level points, skipping" << std::endl;
+    return {};
+  }
+
+  // GNND compile-time constant: number of neighbors stored on device per node.
+  constexpr size_t kGnndDegreeOnDevice = 32;
+  // GNND copies host fp32 data to device fp16 in batches of this many rows.
+  constexpr size_t kGnndBatchRows = 100'000;
+  // sizeof(half) for the fp16 device dataset copy.
+  constexpr size_t kHalfBytes = 2;
+
+  // --- HOST allocations (via raft::make_host_matrix) ---
+  size_t host_query_set = n_upper * dim * dtype_size;           // host_query_set in outer loop
+  size_t host_neighbors = n_upper * hnsw_m * sizeof(uint32_t);  // host_neighbors in outer loop
+  // GNND h_dists: [n_upper, kGnndDegreeOnDevice] float
+  size_t gnnd_h_dists = n_upper * kGnndDegreeOnDevice * sizeof(float);
+  size_t total_host   = host_query_set + host_neighbors + gnnd_h_dists;
+
+  // --- PINNED allocations ---
+  // bufs_storage: 2 × max_batch_size × dim × dtype_size (only when dataset is on device)
+  size_t bufs_storage = 0;
+  if (device_copy) {
+    size_t max_batch =
+      std::max<size_t>(1, (64ULL * 1024 * 1024 + dim * dtype_size - 1) / (dim * dtype_size));
+    bufs_storage = 2 * max_batch * dim * dtype_size;
+  }
+  // GNND graph_host_buffer_ + dists_host_buffer_: [n_upper, kGnndDegreeOnDevice]×(int+float)
+  size_t gnnd_pinned  = n_upper * kGnndDegreeOnDevice * (sizeof(int) + sizeof(float));
+  size_t total_pinned = bufs_storage + gnnd_pinned;
+
+  // --- WORKSPACE allocations ---
+  // GNND converts the host fp32 dataset to fp16 on device in batches; each batch
+  // allocates a temporary fp32 staging buffer of size batch × dim × sizeof(float).
+  size_t gnnd_batch      = std::min(n_upper, kGnndBatchRows);
+  size_t total_workspace = gnnd_batch * dim * sizeof(float);
+
+  // --- DEVICE allocations (persistent through nn_descent iterations) ---
+  // d_data_half_: fp16 copy of the upper-level dataset
+  size_t d_data_half = n_upper * dim * kHalfBytes;
+  // graph_buffer_ + dists_buffer_ + l2_norms_
+  size_t gnnd_dev_bufs =
+    n_upper * kGnndDegreeOnDevice * (sizeof(int) + sizeof(float)) + n_upper * sizeof(float);
+  size_t total_dev = d_data_half + gnnd_dev_bufs;
+
+  std::cout << "hnsw::from_cagra(GPU)::M " << hnsw_m << std::endl;
+  std::cout << "hnsw::from_cagra(GPU)::n_upper " << n_upper << " (~" << to_gib(n_upper)
+            << " billion)" << std::endl;
+  std::cout << "hnsw::from_cagra(GPU)::host_query_set host " << to_mib(host_query_set) << " MiB"
+            << std::endl;
+  std::cout << "hnsw::from_cagra(GPU)::host_neighbors host " << to_mib(host_neighbors) << " MiB"
+            << std::endl;
+  std::cout << "hnsw::from_cagra(GPU)::gnnd::h_dists host " << to_mib(gnnd_h_dists) << " MiB"
+            << std::endl;
+  if (device_copy) {
+    std::cout << "hnsw::from_cagra(GPU)::bufs_storage pinned " << to_mib(bufs_storage) << " MiB"
+              << std::endl;
+  }
+  std::cout << "hnsw::from_cagra(GPU)::gnnd::host_bufs pinned " << to_mib(gnnd_pinned) << " MiB"
+            << std::endl;
+  std::cout << "hnsw::from_cagra(GPU)::gnnd::fp32_batch workspace " << to_mib(total_workspace)
+            << " MiB" << std::endl;
+  std::cout << "hnsw::from_cagra(GPU)::gnnd::d_data_half device " << to_mib(d_data_half) << " MiB"
+            << std::endl;
+  std::cout << "hnsw::from_cagra(GPU)::gnnd::dev_bufs device " << to_mib(gnnd_dev_bufs) << " MiB"
+            << std::endl;
+  std::cout << "memuse_hnsw_from_cagra: host " << to_gib(total_host) << " GiB"
+            << ", pinned " << to_gib(total_pinned) << " GiB"
+            << ", workspace " << to_gib(total_workspace) << " GiB"
+            << ", device " << to_gib(total_dev) << " GiB" << std::endl;
+
+  return {.host            = total_host,
+          .pinned          = total_pinned,
+          .workspace       = total_workspace,
+          .large_workspace = 0,
+          .managed         = 0,
+          .device          = total_dev};
 }
 
 }  // namespace cuvs::neighbors::cagra::helpers

@@ -16,9 +16,10 @@ The x-axis shows elapsed seconds from the first recorded timestamp.
 
 Usage:
     python plot_mem_per_timeline.py [path/to/stats.csv] [-o out.png]
-                                    [-f REGEX]
+                                    [-f REGEX] [--tmin T] [--tmax T]
 
 Use -f/--filter to keep only ranges matching a regex in the bottom panel.
+Use --tmin/--tmax to zoom into a specific elapsed-time window (seconds).
 """
 
 import argparse
@@ -240,7 +241,16 @@ def layout_spans(spans):
     return result, max_sub
 
 
-def plot(t, data, spans, out_path, csv_name):
+def plot(t, data, spans, out_path, csv_name, tmin=None, tmax=None):
+    # Apply time window: mask t and data to [tmin, tmax].
+    lo = tmin if tmin is not None else t[0] if t.size else 0.0
+    hi = tmax if tmax is not None else t[-1] if t.size else 1.0
+    if t.size:
+        mask = (t >= lo) & (t <= hi)
+        t = t[mask]
+        data = {s: v[mask] for s, v in data.items()}
+    spans = [sp for sp in spans if sp["t_end"] >= lo and sp["t_start"] <= hi]
+
     # Only include sources that have any non-zero data.
     active_sources = [s for s in DEVICE_SOURCES + HOST_SOURCES
                       if s in data and data[s].any()]
@@ -334,7 +344,7 @@ def plot(t, data, spans, out_path, csv_name):
 
     if t.size:
         for ax in axes:
-            ax.set_xlim(t[0], t[-1])
+            ax.set_xlim(lo, hi)
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
@@ -353,6 +363,10 @@ def main():
                    help="output PNG path (default: <csv basename>_timeline.png)")
     p.add_argument("-f", "--filter", default=None, metavar="REGEX",
                    help="show only NVTX ranges matching this regex in the bottom panel.")
+    p.add_argument("--tmin", type=float, default=None, metavar="T",
+                   help="start of the elapsed-time window to visualize (seconds).")
+    p.add_argument("--tmax", type=float, default=None, metavar="T",
+                   help="end of the elapsed-time window to visualize (seconds).")
     args = p.parse_args()
 
     if not os.path.isfile(args.csv):
@@ -368,7 +382,8 @@ def main():
 
     spans = extract_spans(rows, filter_pattern=args.filter)
 
-    plot(t, data, spans, out_path, csv_name=os.path.basename(args.csv))
+    plot(t, data, spans, out_path, csv_name=os.path.basename(args.csv),
+         tmin=args.tmin, tmax=args.tmax)
 
 
 if __name__ == "__main__":
