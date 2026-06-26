@@ -140,7 +140,6 @@ int main(int argc, char* argv[])
   // Define a pool allocator for temporary arrays. Internal arrays would use the pool, any other
   // allocation uses the default RMM memory resource. We set a pool with 2 GiB upper limit.
   raft::resource::set_workspace_to_pool_resource(res_untracked, 2 * 1024 * 1024 * 1024ull);
-
   raft::memory_tracking_resources res(res_untracked, csv_path, std::chrono::milliseconds(1));
 
   BinaryFile<float> dataset(positional_args[0], max_dataset_rows);

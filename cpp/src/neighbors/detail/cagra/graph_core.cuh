@@ -1787,9 +1787,6 @@ void optimize(
   auto mst_graph_num_edges = raft::make_host_vector<uint32_t, int64_t>(mst_graph_size);
   cuvs::common::nvtx::pop_range();
 
-  std::cout << "guarantee_connectivity " << guarantee_connectivity << std::endl;
-  std::cout << "use_gpu_for_mst_optimization " << use_gpu_for_mst_optimization << std::endl;
-
   if (guarantee_connectivity) {
     raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> r("optimize::mst_optimization");
     RAFT_LOG_INFO("MST optimization is used to guarantee graph connectivity.");

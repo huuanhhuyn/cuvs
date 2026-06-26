@@ -136,9 +136,11 @@ inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
   size_t graph_degree,
   size_t intermediate_graph_degree,
   bool guarantee_connectivity,
+  bool attach_dataset_on_build,
   size_t dtype_size)
 {
   size_t n_rows = dataset.extent(0);
+  size_t dim = dataset.extent(1);
 
   size_t dataset_gpu_mem =
     cuvs::neighbors::ivf_pq::helpers::compressed_dataset_size(res, dataset, params.build_params);
@@ -167,8 +169,15 @@ inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
                               params.build_params.n_lists));
   size_t kmeans_n_rows  = n_rows / kmeans_trainset_ratio;
   size_t kmeans_gpu_mem = kmeans_n_rows * dataset.extent(1) * sizeof(float);
+  if (dtype_size != sizeof(float)) {
+    // kmeans trainset tmp allocation
+    kmeans_gpu_mem += kmeans_n_rows * dim * dtype_size;
+  }
+  std::cout << "kmeans_trainset_tmp " << to_mib(kmeans_n_rows * dim * dtype_size) << " MiB" << std::endl;
 
   size_t ivf_pq_extend_size = ivf_pq_extend_mem_usage(dataset, params, dtype_size);
+
+  size_t attach_dataset_graph_size = attach_dataset_on_build ? n_rows * graph_degree * sizeof(uint32_t) : 0;
 
   // Account for remaining small allocations
   constexpr size_t kResidualHost = 2e8;
@@ -176,12 +185,14 @@ inline std::pair<size_t, size_t> ivf_pq_build_mem_usage(
 
   std::cout << "kmeans_gpu_mem " << to_gib(kmeans_gpu_mem) << " GiB, "
             << "dataset_gpu_mem " << to_gib(dataset_gpu_mem) << " GiB, "
-            << "gpu_workspace_size " << to_gib(gpu_workspace_size) << " GiB" << std::endl;
+            << "gpu_workspace_size " << to_gib(gpu_workspace_size) << " GiB, "
+            << "ivf_pq_extend_size " << to_gib(ivf_pq_extend_size) << " GiB, "
+            << "attach_dataset_graph_size " << to_gib(attach_dataset_graph_size) << " GiB" << std::endl;
 
   size_t total_host =
     graph_host_mem + host_workspace_size + debug_host_size + kSampleRowsPinnedSize + kResidualHost;
   size_t total_dev =
-    std::max({kmeans_gpu_mem, dataset_gpu_mem, gpu_workspace_size, ivf_pq_extend_size}) +
+    std::max({kmeans_gpu_mem, dataset_gpu_mem, gpu_workspace_size, ivf_pq_extend_size, attach_dataset_graph_size}) +
     kResidualGpu;
 
   std::cout << "** ivf_pq_build_mem_usage: "
@@ -210,6 +221,7 @@ std::pair<size_t, size_t> cagra_build_mem_usage(raft::resources const& res,
                                                              cparams.graph_degree,
                                                              cparams.intermediate_graph_degree,
                                                              cparams.guarantee_connectivity,
+                                                             cparams.attach_dataset_on_build,
                                                              dtype_size);
   } else if (std::holds_alternative<graph_build_params::nn_descent_params>(
                cparams.graph_build_params)) {
@@ -404,7 +416,7 @@ MemUsage memuse_ivf_pq_extend(size_t n_rows,
   std::cout << "ivf_pq::build_knn::build::extend::pq_codes " << to_mib(resize_lists_dev) << " MiB"
             << std::endl;
   std::cout << "memuse_ivf_pq_extend: "
-            << " GiB, workspace: " << to_gib(total_ws)
+            << " workspace: " << to_gib(total_ws)
             << " GiB, large_workspace: " << to_gib(new_data_labels_large)
             << " GiB, device: " << to_gib(total_dev) << " GiB" << std::endl;
 

@@ -166,11 +166,11 @@
          dataset_path.parent_path().filename().string() + "_" + dataset_path.stem().string();
      std::string csv_path_str = "datasets_int8_" + dataset_name + "_" + mode_str + ".csv";
      const char* csv_path     = csv_path_str.c_str();
-     raft::memory_tracking_resources res(res_untracked, csv_path, std::chrono::milliseconds(1));
  
      // Define a pool allocator for temporary arrays. Internal arrays would use the pool, any other allocation
      // uses the default RMM memory resource. We set a pool with 2 GiB upper limit.
-     raft::resource::set_workspace_to_pool_resource(res, 2 * 1024 * 1024 * 1024ull);
+     raft::resource::set_workspace_to_pool_resource(res_untracked, 2 * 1024 * 1024 * 1024ull);
+     raft::memory_tracking_resources res(res_untracked, csv_path, std::chrono::milliseconds(1));
  
      BinaryFile<float> dataset(positional_args[0], max_dataset_rows);
  
@@ -178,7 +178,7 @@
  
      raft::default_logger().set_level(rapids_logger::level_enum::debug);
  
-     std::string quant_path = std::filesystem::path(positional_args[0]).parent_path().filename().string() + "_quantized_dataset.i8bin";
+    std::string quant_path = "/datasets/quantized-datasets/" + std::filesystem::path(positional_args[0]).parent_path().filename().string() + "_quantized_dataset.i8bin";
     //  {
     //      auto start_time = std::chrono::high_resolution_clock::now();
  
