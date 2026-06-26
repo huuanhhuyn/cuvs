@@ -9,6 +9,7 @@
 #include <raft/core/device_mdarray.hpp>
 #include <raft/core/resources.hpp>
 #include <raft/random/make_blobs.cuh>
+#include <raft/util/memory_tracking_resources.hpp>
 #include <string>
 
 #include <cuvs/neighbors/cagra.hpp>
@@ -28,7 +29,9 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-int cagra_build_search_ace(raft::resources const& res)
+enum class build_mode { no_ace, ace, ace_use_disk };
+
+int cagra_build_search_ace(raft::resources const& res, build_mode mode)
 {
   using namespace cuvs::neighbors;
 
@@ -66,6 +69,18 @@ int cagra_build_search_ace(raft::resources const& res)
   params.ef_construction = 200;
   params.hierarchy       = cuvs::neighbors::hnsw::HnswHierarchy::GPU;
 
+  if (mode == build_mode::no_ace) {
+    std::cout << "Using non-ACE graph build" << std::endl;
+  } else {
+    auto ace_params           = hnsw::graph_build_params::ace_params();
+    ace_params.npartitions    = 4;
+    ace_params.build_dir      = "/tmp/hnsw_ace_build";
+    ace_params.use_disk       = (mode == build_mode::ace_use_disk);
+    params.graph_build_params = ace_params;
+    std::cout << "Using ACE graph build (use_disk=" << std::boolalpha << ace_params.use_disk << ")"
+              << std::endl;
+  }
+
   auto hnsw_index = hnsw::build(res, params, dataset_host_view);
 
   std::string hnsw_index_path = "hnsw_index.bin";
@@ -77,8 +92,24 @@ int cagra_build_search_ace(raft::resources const& res)
   return 0;
 }
 
-int main()
+int main(int argc, char** argv)
 {
+  // Select graph build mode: "no_ace" (default), "ace", or "ace_use_disk".
+  build_mode mode = build_mode::no_ace;
+  if (argc > 1) {
+    std::string arg = argv[1];
+    if (arg == "no_ace") {
+      mode = build_mode::no_ace;
+    } else if (arg == "ace") {
+      mode = build_mode::ace;
+    } else if (arg == "ace_use_disk") {
+      mode = build_mode::ace_use_disk;
+    } else {
+      std::cerr << "Usage: " << argv[0] << " [no_ace|ace|ace_use_disk]" << std::endl;
+      return EXIT_FAILURE;
+    }
+  }
+
   raft::resources res;
 
   // // Set pool memory resource with 1 GiB initial pool size. All allocations use the same pool.
@@ -92,6 +123,16 @@ int main()
   // a pool with 2 GiB upper limit.
   raft::resource::set_workspace_to_pool_resource(res, 2 * 1024 * 1024 * 1024ull);
 
+  const char* mode_str = (mode == build_mode::ace_use_disk) ? "ace_use_disk"
+                         : (mode == build_mode::ace)        ? "ace"
+                                                            : "no_ace";
+  char csv_path_buf[256];
+  snprintf(csv_path_buf, sizeof(csv_path_buf), "openai_5M_%s.csv", mode_str);
+  const char* csv_path = csv_path_buf;
+  raft::memory_tracking_resources tracked(res, csv_path, std::chrono::milliseconds(1));
+
   // ACE build and search example.
-  cagra_build_search_ace(res);
+  cagra_build_search_ace(tracked, mode);
+
+  std::cout << "Tracking stats: " << csv_path << std::endl;
 }

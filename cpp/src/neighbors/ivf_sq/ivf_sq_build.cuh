@@ -281,8 +281,8 @@ void extend_inplace(raft::resources const& handle,
   auto dim     = index->dim();
   list_spec<uint32_t, CodeT, int64_t> list_device_spec{index->dim(),
                                                        index->conservative_memory_allocation()};
-  cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_sq::extend(%zu, %u)", size_t(n_rows), dim);
+  // cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_sq::extend(%zu, %u)", size_t(n_rows), dim);
 
   RAFT_EXPECTS(new_indices != nullptr || index->size() == 0,
                "You must pass data indices when the index is non-empty.");
@@ -446,8 +446,8 @@ inline auto build(
   int64_t n_rows = dataset.extent(0);
   uint32_t dim   = dataset.extent(1);
   auto stream    = raft::resource::get_cuda_stream(handle);
-  cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "ivf_sq::build(%zu, %u)", size_t(n_rows), dim);
+  // cuvs::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "ivf_sq::build(%zu, %u)", size_t(n_rows), dim);
   static_assert(std::is_same_v<T, float> || std::is_same_v<T, half>, "unsupported data type");
   RAFT_EXPECTS(n_rows > 0 && dim > 0, "empty dataset");
   RAFT_EXPECTS(n_rows >= params.n_lists, "number of rows can't be less than n_lists");

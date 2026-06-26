@@ -3273,6 +3273,180 @@ std::pair<size_t, size_t> cagra_build_mem_usage(raft::resources const& res,
                                                 size_t dtype_size,
                                                 cuvs::neighbors::cagra::index_params cparams);
 
+/** Peak memory allocated per source during graph_core::optimize(). All sizes in bytes. */
+struct MemUsage {
+  size_t host;             // raft::make_host_* (malloc)
+  size_t pinned;           // pinned host memory (currently unused by optimize)
+  size_t workspace;        // get_workspace_resource (small device batches + d_rev_graph_count)
+  size_t large_workspace;  // get_large_workspace_resource (full knn graph on device during prune)
+  size_t managed;          // CUDA managed memory (currently unused by optimize)
+  size_t device;           // default device allocator (mst arrays or d_dest_nodes)
+};
+
+/**
+ * Estimate peak memory allocated per source during graph_core::optimize().
+ *
+ * @param[in] n_rows         number of vectors (graph nodes)
+ * @param[in] graph_degree   output graph degree (D_out)
+ * @param[in] intermediate_degree input knn graph degree (D_in, >= graph_degree)
+ * @param[in] index_size     sizeof(IdxT), typically 4 (uint32_t)
+ * @param[in] guarantee_connectivity whether MST optimization is enabled
+ * @return MemUsage with peak bytes per allocator source
+ */
+MemUsage memuse_optimize(size_t n_rows,
+                         size_t graph_degree,
+                         size_t intermediate_degree,
+                         size_t index_size,
+                         bool guarantee_connectivity = true);
+
+/**
+ * Estimate peak memory allocated per source during ivf_pq_build.cuh::extend().
+ *
+ * @param[in] n_rows      number of new vectors being added
+ * @param[in] dim         vector dimension
+ * @param[in] rot_dim     rotated dimension = pq_len * pq_dim
+ * @param[in] n_clusters  number of IVF lists (n_lists)
+ * @param[in] index_size  sizeof(IdxT), typically 4
+ * @param[in] dtype_size  sizeof(T), e.g. 4 for float, 1 for uint8_t
+ * @return MemUsage with peak bytes per allocator source
+ */
+MemUsage memuse_ivf_pq_extend(size_t n_rows,
+                              size_t dim,
+                              size_t rot_dim,
+                              size_t n_clusters,
+                              size_t index_size,
+                              size_t dtype_size);
+
+/**
+ * Estimate peak memory allocated per source during ivf_pq_build.cuh::build().
+ * Internally reuses memuse_ivf_pq_extend for the extend phase (sequential with training).
+ *
+ * @param[in] n_rows               total vectors in the dataset
+ * @param[in] n_rows_train         kmeans training subset size
+ * @param[in] dim                  vector dimension
+ * @param[in] pq_dim               number of PQ subspaces
+ * @param[in] pq_len               subspace length = ceil(dim / pq_dim)
+ * @param[in] pq_book_size         PQ codebook size = 1 << pq_bits (typically 256)
+ * @param[in] n_clusters           number of IVF lists (n_lists)
+ * @param[in] index_size           sizeof(IdxT), typically 4
+ * @param[in] dtype_size           sizeof(T)
+ * @param[in] codebook_per_cluster true = PER_CLUSTER codebook, false = PER_SUBSPACE
+ * @return MemUsage with peak bytes per allocator source
+ */
+MemUsage memuse_ivf_pq_build(size_t n_rows,
+                             size_t n_rows_train,
+                             size_t dim,
+                             size_t pq_dim,
+                             size_t pq_len,
+                             size_t pq_book_size,
+                             size_t n_clusters,
+                             size_t index_size,
+                             size_t dtype_size,
+                             bool codebook_per_cluster,
+                             const raft::resources& handle);
+
+/**
+ * Estimate peak memory allocated per source during cagra_build.cuh::build_knn_graph().
+ *
+ * Two sequential phases; device holds the IVF-PQ index across both:
+ *   Phase 1 – ivf_pq::build: uses memuse_ivf_pq_build (workspace/large_workspace/device)
+ *   Phase 2 – ivf_pq::search loop: I/O buffers in workspace_mr (workspace or large_workspace)
+ *             + host staging buffers
+ *
+ * @param[in] n_rows            number of dataset vectors
+ * @param[in] n_rows_train      kmeans training subset size
+ * @param[in] dim               vector dimension
+ * @param[in] node_degree       output knn graph degree (knn_graph.extent(1))
+ * @param[in] gpu_top_k         search top-k (= min(max(node_degree*refinement_rate, node_degree+1),
+ * n_rows))
+ * @param[in] dtype_size        sizeof(DataT)
+ * @param[in] pq_dim            number of PQ subspaces
+ * @param[in] pq_len            subspace length = ceil(dim / pq_dim)
+ * @param[in] pq_bits           bits per PQ code (typically 8)
+ * @param[in] pq_book_size      1 << pq_bits (typically 256)
+ * @param[in] n_lists           number of IVF clusters
+ * @param[in] max_queries       IVF-PQ search max_internal_batch_size
+ * @param[in] codebook_per_cluster true = PER_CLUSTER codebook
+ * @return MemUsage with peak bytes per allocator source
+ */
+MemUsage memuse_build_knn_graph_by_ivf_pq(size_t n_rows,
+                                          size_t n_rows_train,
+                                          size_t dim,
+                                          size_t node_degree,
+                                          size_t gpu_top_k,
+                                          size_t dtype_size,
+                                          size_t pq_dim,
+                                          size_t pq_len,
+                                          size_t pq_bits,
+                                          size_t pq_book_size,
+                                          size_t n_lists,
+                                          size_t n_probes,
+                                          size_t max_queries,
+                                          bool codebook_per_cluster,
+                                          const raft::resources& handle);
+
+/**
+ * @brief Estimate peak memory per allocator source for cagra_build.cuh::build() (IVF-PQ path).
+ *
+ * Combines memuse_build_knn_graph_by_ivf_pq (Phase 1) and memuse_optimize (Phase 2).
+ * Persistent host buffers (knn_graph and cagra_graph) are added on top of each phase's estimate.
+ * The IVF-PQ index on device is freed before optimize starts, so device peak = max(phase1, phase2).
+ *
+ * @param[in] n_rows             total number of vectors
+ * @param[in] n_rows_train       number of vectors used for IVF-PQ training (kmeans subset)
+ * @param[in] dim                vector dimensionality
+ * @param[in] graph_degree       final CAGRA graph degree (D_out)
+ * @param[in] intermediate_degree KNN graph degree used as input to optimize (D_in)
+ * @param[in] index_size         sizeof(IdxT), typically 4 for uint32_t
+ * @param[in] dtype_size         sizeof(DataT)
+ * @param[in] gpu_top_k          IVF-PQ search top-k (>= intermediate_degree + 1)
+ * @param[in] pq_dim             number of PQ subspaces
+ * @param[in] pq_len             subspace length = ceil(dim / pq_dim)
+ * @param[in] pq_bits            bits per PQ code (typically 8)
+ * @param[in] pq_book_size       1 << pq_bits (typically 256)
+ * @param[in] n_lists            number of IVF clusters
+ * @param[in] max_queries        IVF-PQ search max_internal_batch_size
+ * @param[in] codebook_per_cluster true = PER_CLUSTER codebook
+ * @param[in] guarantee_connectivity true = MST connectivity pass in optimize
+ * @return MemUsage with peak bytes per allocator source
+ */
+MemUsage memuse_cagra_build(size_t n_rows,
+                            size_t n_rows_train,
+                            size_t dim,
+                            size_t graph_degree,
+                            size_t intermediate_degree,
+                            size_t index_size,
+                            size_t dtype_size,
+                            size_t gpu_top_k,
+                            size_t pq_dim,
+                            size_t pq_len,
+                            size_t pq_bits,
+                            size_t pq_book_size,
+                            size_t n_lists,
+                            size_t n_probes,
+                            size_t max_queries,
+                            bool codebook_per_cluster,
+                            bool guarantee_connectivity,
+                            bool attach_dataset,
+                            const raft::resources& handle);
+
+/**
+ * @brief High-level overload of memuse_cagra_build that extracts IVF-PQ parameters from
+ * cagra::index_params directly. Only the IVF-PQ build path is estimated; returns a zeroed
+ * MemUsage for other build paths.
+ *
+ * @param[in] n_rows      total number of vectors
+ * @param[in] dim         vector dimensionality
+ * @param[in] dtype_size  sizeof(DataT)
+ * @param[in] cagra_params CAGRA index parameters (graph_build_params must hold ivf_pq_params)
+ * @return MemUsage with peak bytes per allocator source
+ */
+MemUsage memuse_cagra_build(size_t n_rows,
+                            size_t dim,
+                            size_t dtype_size,
+                            const cuvs::neighbors::cagra::index_params& cagra_params,
+                            const raft::resources& handle);
+
 /**
  * @brief Optimize a KNN graph into a CAGRA graph.
  *

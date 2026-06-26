@@ -45,7 +45,7 @@ void serialize(raft::resources const& res,
                const index<T, IdxT>& index_,
                bool include_dataset)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("cagra::serialize");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("cagra::serialize");
 
   RAFT_EXPECTS(!index_.dataset_fd().has_value(),
                "Cannot serialize a disk-backed CAGRA index. Convert it with "
@@ -111,7 +111,7 @@ void serialize_to_hnswlib(
   // static_assert(std::is_same_v<IdxT, int> or std::is_same_v<IdxT, uint32_t>,
   //               "An hnswlib index can only be trained with int32 or uint32 IdxT");
   int dim = (dataset) ? dataset->extent(1) : index_.dim();
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("cagra::serialize");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("cagra::serialize");
   RAFT_LOG_DEBUG("Saving CAGRA index to hnswlib format, size %zu, dim %u",
                  static_cast<size_t>(index_.size()),
                  dim);
@@ -266,7 +266,7 @@ void serialize_to_hnswlib(
 template <typename T, typename IdxT>
 void deserialize(raft::resources const& res, std::istream& is, index<T, IdxT>* index_)
 {
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("cagra::deserialize");
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope("cagra::deserialize");
 
   char dtype_string[4];
   RAFT_EXPECTS(is.read(dtype_string, 4), "cagra::deserialize: failed to read dtype prefix");

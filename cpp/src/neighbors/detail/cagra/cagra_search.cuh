@@ -67,11 +67,11 @@ void search_main_core(
     params.max_queries = std::min<size_t>(queries.extent(0), deviceProp.maxGridSize[1]);
   }
 
-  raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
-    "cagra::search(max_queries = %u, k = %u, dim = %zu)",
-    params.max_queries,
-    topk,
-    queries.extent(1));
+  // raft::common::nvtx::range<cuvs::common::nvtx::domain::cuvs> fun_scope(
+    // "cagra::search(max_queries = %u, k = %u, dim = %zu)",
+    // params.max_queries,
+    // topk,
+    // queries.extent(1));
 
   using CagraSampleFilterT_s = typename CagraSampleFilterT_Selector<CagraSampleFilterT>::type;
   std::unique_ptr<
