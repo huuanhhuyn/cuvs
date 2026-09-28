@@ -456,3 +456,37 @@ if(CUVS_ANN_BENCH_SINGLE_EXE)
     EXCLUDE_FROM_ALL
   )
 endif()
+
+# ##################################################################################################
+# * KMeans microbenchmark (standalone gbench, not part of the ANN benchmark framework) -------------
+
+if(NOT BUILD_CPU_ONLY)
+  add_executable(CUVS_KMEANS_BENCH src/cuvs/cuvs_kmeans.cu)
+
+  target_link_libraries(
+    CUVS_KMEANS_BENCH
+    PRIVATE cuvs
+            cuvs::cuvs
+            raft::raft
+            benchmark::benchmark
+            benchmark::benchmark_main
+            Threads::Threads
+            $<TARGET_NAME_IF_EXISTS:conda_env>
+  )
+
+  set_target_properties(
+    CUVS_KMEANS_BENCH
+    PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUVS_BINARY_DIR}/bench/cluster>"
+               CXX_STANDARD 20
+               CXX_STANDARD_REQUIRED ON
+               CUDA_STANDARD 20
+               CUDA_STANDARD_REQUIRED ON
+  )
+
+  target_compile_options(
+    CUVS_KMEANS_BENCH
+    PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:${CUVS_CXX_FLAGS}>"
+            "$<$<COMPILE_LANGUAGE:CUDA>:${CUVS_CUDA_FLAGS}>"
+            "$<$<COMPILE_LANGUAGE:CUDA>:-diag-suppress=177>"  # TODO remove
+  )
+endif()
